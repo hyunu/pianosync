@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# App artifacts
+*.log
+.cache/
+projects/*.json
+!projects/.gitkeep
+renders/*.mp4
+renders/*.mov
+renders/*.mkv
+renders/.gitkeep
+
+# OS
+.DS_Store
+
+# Sample media (large binaries — keep local, not in git)
+samples/
