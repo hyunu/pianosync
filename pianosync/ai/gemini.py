@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any, Dict, Optional
 
 import requests
@@ -27,18 +28,47 @@ def _extract_json_object(text: str) -> Optional[dict]:
         return None
     cleaned = re.sub(r"```(?:json)?", "", text).strip()
     cleaned = re.sub(r"```", "", cleaned).strip()
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
+    for candidate in (cleaned, _repair_json_literals(cleaned)):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
     pattern = re.compile(r"\{.*\}", re.DOTALL)
     match = pattern.search(text)
     if not match:
         return None
-    try:
-        return json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
+    for candidate in (match.group(0), _repair_json_literals(match.group(0))):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def _repair_json_literals(text: str) -> str:
+    """Escape literal control characters that models sometimes emit inside JSON
+    string values (e.g. an unescaped newline in a ``reason`` field)."""
+    out = []
+    in_string = False
+    escaped = False
+    for char in text:
+        if escaped:
+            out.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            out.append(char)
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            out.append(char)
+            continue
+        if in_string and char in ("\n", "\r", "\t"):
+            out.append("\\n" if char != "\t" else "\\t")
+            continue
+        out.append(char)
+    return "".join(out)
 
 
 class GeminiClient:
@@ -50,11 +80,13 @@ class GeminiClient:
         model: Optional[str] = None,
         api_base: Optional[str] = None,
         timeout: int = 30,
+        backoff: float = 5.0,
     ):
         self.api_key = api_key or get_api_key()
         self.model = model or DEFAULT_GEMINI_MODEL
         self.api_base = (api_base or GEMINI_API_BASE).rstrip("/")
         self.timeout = timeout
+        self.backoff = backoff
 
     @property
     def configured(self) -> bool:
@@ -68,27 +100,47 @@ class GeminiClient:
             )
 
     # -- transport ------------------------------------------------------
-    def _generate_content(self, prompt: str, system_instruction: Optional[str] = None) -> str:
+    def _generate_content(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        json_mode: bool = False,
+    ) -> str:
         self._require_key()
         url = f"{self.api_base}/v1beta/models/{self.model}:generateContent"
         contents: list = []
         if system_instruction:
             contents.append({"role": "user", "parts": [{"text": system_instruction}]})
         contents.append({"role": "user", "parts": [{"text": prompt}]})
+        generation: dict = {"temperature": 0.2, "maxOutputTokens": 4096 if json_mode else 2048}
+        if json_mode:
+            generation["responseMimeType"] = "application/json"
         payload = {
             "contents": contents,
-            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048},
+            "generationConfig": generation,
         }
-        try:
-            response = requests.post(
-                url,
-                params={"key": self.api_key},
-                json=payload,
-                timeout=self.timeout,
-            )
-        except requests.RequestException as exc:
-            raise GeminiError(f"Network error while calling Gemini: {exc}") from exc
-        return self._parse_response(response)
+        last: Optional[requests.Response] = None
+        for attempt in range(3):
+            try:
+                last = requests.post(
+                    url,
+                    params={"key": self.api_key},
+                    json=payload,
+                    timeout=self.timeout,
+                )
+            except requests.RequestException as exc:
+                raise GeminiError(f"Network error while calling Gemini: {exc}") from exc
+            if last.status_code == 429 and attempt < 2:
+                headers = getattr(last, "headers", None) or {}
+                retry_after = headers.get("Retry-After")
+                try:
+                    wait = float(retry_after) if retry_after else self.backoff * (attempt + 1)
+                except ValueError:
+                    wait = self.backoff * (attempt + 1)
+                time.sleep(min(wait, 60.0))
+                continue
+            break
+        return self._parse_response(last)
 
     @staticmethod
     def _parse_response(response: requests.Response) -> str:
@@ -123,6 +175,16 @@ class GeminiClient:
         except (IndexError, AttributeError, KeyError) as exc:
             raise GeminiError("Gemini response had an unexpected structure.") from exc
 
+    def _generate_json(self, prompt: str, attempts: int = 2) -> dict:
+        """Generate a JSON object, retrying once on a transiently incomplete
+        or unparseable response (models occasionally truncate the output)."""
+        for _ in range(max(1, attempts)):
+            raw = self._generate_content(prompt, json_mode=True)
+            parsed = _extract_json_object(raw)
+            if parsed:
+                return parsed
+        return {}
+
     # -- high-level features ---------------------------------------------
     def verify_same_piece(
         self,
@@ -142,8 +204,7 @@ class GeminiClient:
             f"Recording A: {json.dumps(summary_a, ensure_ascii=False)}\n"
             f"Recording B: {json.dumps(summary_b, ensure_ascii=False)}"
         )
-        text = self._generate_content(prompt)
-        parsed = _extract_json_object(text) or {}
+        parsed = self._generate_json(prompt)
         same = _coerce_bounded(parsed.get("same"), "same")
         confidence = _coerce_bounded(parsed.get("confidence"), "confidence")
         reason = str(parsed.get("reason", ""))[:500]
@@ -179,8 +240,7 @@ class GeminiClient:
             'only: {"time": <seconds or null>}\n'
             f"Summary: {json.dumps(summary, ensure_ascii=False)}"
         )
-        text = self._generate_content(prompt)
-        parsed = _extract_json_object(text) or {}
+        parsed = self._generate_json(prompt)
         raw = parsed.get("time")
         if raw is None or raw is False:
             return None

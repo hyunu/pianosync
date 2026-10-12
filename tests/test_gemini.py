@@ -68,10 +68,11 @@ def test_rate_limit_raises(monkeypatch):
 
     monkeypatch.setattr("pianosync.ai.gemini.requests.post", fake_post)
     with pytest.raises(GeminiError, match="429"):
-        GeminiClient(api_key="k").verify_same_piece({}, {})
+        GeminiClient(api_key="k", backoff=0.0).verify_same_piece({}, {})
 
 
-def test_missing_key_disabled():
+def test_missing_key_disabled(monkeypatch):
+    monkeypatch.setattr("pianosync.ai.gemini.get_api_key", lambda: "")
     client = GeminiClient(api_key="", model="x")
     assert not client.configured
     with pytest.raises(GeminiUnavailableError):
@@ -89,7 +90,7 @@ def test_locate_section_candidate_validated(monkeypatch):
     client_high = GeminiClient(api_key="k")
     monkeypatch.setattr(
         "pianosync.ai.gemini.GeminiClient._generate_content",
-        lambda self, prompt, system_instruction=None: '{"time": 999}',
+        lambda self, prompt, system_instruction=None, json_mode=False: '{"time": 999}',
     )
     assert client_high.locate_section_candidate("x", {}, 30.0) is None
 

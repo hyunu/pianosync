@@ -40,7 +40,7 @@ FEATURE_FPS = SAMPLE_RATE / HOP_LENGTH
 # Gemini defaults (model id is configurable, never hard-coded in logic)
 # ---------------------------------------------------------------------------
 
-DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
 GEMINI_API_BASE = os.environ.get(
     "GEMINI_API_BASE", "https://generativelanguage.googleapis.com"
 )
