@@ -31,6 +31,3 @@ renders/.gitkeep
 
 # OS
 .DS_Store
-
-# Sample media (large binaries — keep local, not in git)
-samples/
