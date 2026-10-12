@@ -1,0 +1,86 @@
+"""Time-mapping helpers shared by audio assembly and video rendering."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List, Tuple
+
+import numpy as np
+
+from ..config import OutputConfig
+from ..core.alignment import TimeMap
+from ..core.transitions import Segment
+
+
+@dataclass
+class SegmentTiming:
+    index: int
+    source: str
+    src_start: float  # in-point inside the shown source video
+    out_duration: float  # length on the output timeline
+    a_start: float
+    a_end: float
+
+
+def plan_segment_timings(segments: List[Segment], b_duration: float) -> List[SegmentTiming]:
+    """Convert alignment segments into concrete source in/out points.
+
+    Output duration is the reference (A) span, so audio taken from A stays
+    naturally continuous. For B-sourced segments the in-point is the mapped B
+    time and the clip is clamped to B's length.
+    """
+    timings: List[SegmentTiming] = []
+    for seg in segments:
+        out_duration = max(0.0, seg.a_end - seg.a_start)
+        if out_duration <= 0:
+            continue
+        if seg.source == "B":
+            src_start = max(0.0, min(seg.b_start, max(b_duration - 0.01, 0.0)))
+        else:
+            src_start = max(0.0, seg.a_start)
+        timings.append(
+            SegmentTiming(
+                index=seg.index,
+                source=seg.source,
+                src_start=src_start,
+                out_duration=out_duration,
+                a_start=seg.a_start,
+                a_end=seg.a_end,
+            )
+        )
+    return timings
+
+
+def resolve_output_size(
+    output: OutputConfig, a_width: int, a_height: int
+) -> Tuple[int, int]:
+    """Return the output (width, height), even-ised for H.264."""
+    width = output.width or a_width or 1920
+    height = output.height or a_height or 1080
+    width -= width % 2
+    height -= height % 2
+    return max(width, 2), max(height, 2)
+
+
+def _clamp_index(values: np.ndarray, upper: int) -> np.ndarray:
+    return np.clip(values, 0.0, float(upper))
+
+
+def warp_signal_to_reference(
+    signal: np.ndarray,
+    sample_rate: int,
+    time_map: TimeMap,
+    grid_times: np.ndarray,
+) -> np.ndarray:
+    """Resample ``signal`` so its musical positions line up with ``grid_times``.
+
+    ``grid_times`` are absolute times on the reference (A) clock; the returned
+    signal has one sample per grid point, taken from B at the mapped time.
+    """
+    if signal.size == 0 or grid_times.size == 0:
+        return np.zeros(grid_times.size, dtype=np.float32)
+    mapped_times = np.interp(grid_times, time_map.a_times, time_map.a_to_b_sec)
+    sample_positions = _clamp_index(mapped_times * sample_rate, signal.size - 1)
+    axis = np.arange(signal.size, dtype=np.float64)
+    warped = np.interp(sample_positions, axis, signal.astype(np.float64))
+    return warped.astype(np.float32)

@@ -68,14 +68,13 @@ def _chroma_filter(sample_rate: int, n_fft: int, fmin: float = 55.0, fmax: float
     """Build a (12, n_bins) mapping from FFT bins to pitch classes."""
     freqs = np.fft.rfftfreq(n_fft, d=1.0 / sample_rate)
     mapping = np.zeros((12, freqs.shape[0]), dtype=np.float32)
-    valid = (freqs >= fmin) & (freqs <= fmax)
-    with np.errstate(divide="ignore"):
-        midi = 69.0 + 12.0 * np.log2(np.where(freqs > 0, freqs, np.nan) / 440.0)
+    idx = np.where((freqs >= fmin) & (freqs <= fmax))[0]
+    if idx.size == 0:
+        return mapping
+    midi = 69.0 + 12.0 * np.log2(freqs[idx] / 440.0)
     pc = np.round(midi).astype(np.int64) % 12
-    idx = np.where(valid & np.isfinite(midi))[0]
-    for bin_index in idx:
-        mapping[pc[bin_index], bin_index] += 1.0
-    # Slight smoothing across octaves is already handled by collapsing to pc.
+    for bin_index, pitch_class in zip(idx, pc):
+        mapping[pitch_class, bin_index] += 1.0
     return mapping
 
 
