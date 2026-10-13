@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Piano Sync Switcher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<div class="aurora"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <path d="M4 14c2-6 5-9 8-9s6 3 8 9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+        <circle cx="6" cy="15.5" r="2.1" fill="currentColor"/>
+        <circle cx="18" cy="15.5" r="2.1" fill="currentColor"/>
+      </svg>
+    </div>
+    <div class="brand-text">
+      <span class="brand-title">Piano&nbsp;Sync</span>
+      <span class="brand-sub">A/B 연주 정렬 · 비교 영상</span>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div id="aiChip" class="chip chip-muted" title="Gemini 보조">
+      <span class="dot"></span><span id="aiChipText">AI 확인 중…</span>
+    </div>
+    <button id="newBtn" class="btn btn-ghost" type="button">새 프로젝트</button>
+  </div>
+</header>
+
+<nav class="steps">
+  <button class="step is-active" data-step="1"><b>1</b><span>입력 · 분석</span></button>
+  <button class="step" data-step="2"><b>2</b><span>정렬 편집</span></button>
+  <button class="step" data-step="3"><b>3</b><span>미리보기</span></button>
+  <button class="step" data-step="4"><b>4</b><span>출력</span></button>
+  <div class="step-progress"><i id="stepBar"></i></div>
+</nav>
+
+<main class="stage">
+
+  <!-- STEP 1 -->
+  <section class="panel is-active" data-panel="1">
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="card-head"><h2>영상 A</h2><span class="tag tag-a">기준</span></div>
+        <label class="drop" id="dropA">
+          <input type="file" id="fileA" accept="video/*,audio/*" hidden />
+          <svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="drop-title">동영상 선택 또는 드래그</span>
+          <span class="drop-hint">mp4 · mov · mkv · m4v</span>
+          <span class="drop-file" id="fileAName"></span>
+        </label>
+        <div class="progress slim" id="upProgA"><i></i></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>영상 B</h2><span class="tag tag-b">비교</span></div>
+        <label class="drop" id="dropB">
+          <input type="file" id="fileB" accept="video/*,audio/*" hidden />
+          <svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="drop-title">동영상 선택 또는 드래그</span>
+          <span class="drop-hint">mp4 · mov · mkv · m4v</span>
+          <span class="drop-file" id="fileBName"></span>
+        </label>
+        <div class="progress slim" id="upProgB"><i></i></div>
+      </div>
+    </div>
+
+    <div class="card row-card">
+      <div class="field">
+        <label>분석 품질</label>
+        <select id="quality"></select>
+      </div>
+      <div class="field">
+        <label>전환 주기 (초)</label>
+        <input type="number" id="interval" value="5" min="1" max="60" step="0.5" />
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="useAi" checked />
+        <span class="track"></span><span>Gemini 보조</span>
+      </label>
+      <button id="analyzeBtn" class="btn btn-primary" disabled>분석 시작</button>
+    </div>
+
+    <div class="card" id="runCard" hidden>
+      <div class="run-head">
+        <span class="spinner"></span>
+        <span id="runMsg">준비 중…</span>
+        <button id="cancelBtn" class="btn btn-ghost small">취소</button>
+      </div>
+      <div class="progress"><i id="runBar"></i></div>
+    </div>
+
+    <div class="card summary-card" id="summaryCard" hidden>
+      <div class="card-head"><h2>분석 요약</h2><span id="summaryBadge" class="badge">완료</span></div>
+      <div class="stat-grid" id="statGrid"></div>
+      <p class="note" id="aiNote"></p>
+    </div>
+  </section>
+
+  <!-- STEP 2 -->
+  <section class="panel" data-panel="2">
+    <div class="card">
+      <div class="card-head">
+        <h2>정렬 파형</h2>
+        <span class="hint">클릭: 이동 · Ctrl-클릭: 앵커 추가 · 우클릭: 앵커 제거</span>
+      </div>
+      <div class="wave-wrap">
+        <canvas id="wave"></canvas>
+        <div class="wave-empty" id="waveEmpty">분석을 먼저 실행하세요</div>
+      </div>
+      <div class="legend">
+        <span><i class="sw sw-a"></i>영상 A</span>
+        <span><i class="sw sw-b"></i>영상 B</span>
+        <span><i class="sw sw-low"></i>저신뢰</span>
+        <span><i class="sw sw-anchor"></i>앵커</span>
+        <span class="cursor-readout" id="timeReadout">0.00s</span>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="card-head"><h2>전환 설정</h2></div>
+        <div class="field-row">
+          <div class="field"><label>모드</label><select id="mode"></select></div>
+          <div class="field"><label>효과</label><select id="effect"></select></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>오디오</label><select id="audioMode"></select></div>
+          <div class="field"><label>시작 영상</label><select id="startWith"><option value="A">A</option><option value="B">B</option></select></div>
+        </div>
+        <label class="switch"><input type="checkbox" id="snap" checked /><span class="track"></span><span>온셋에 스냅</span></label>
+        <button id="applyBtn" class="btn btn-primary wide">전환 지점 생성 / 갱신</button>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>구간</h2><span id="segCount" class="badge">0</span></div>
+        <div class="seg-list" id="segList"></div>
+        <div class="warn-list" id="warnList"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEP 3 -->
+  <section class="panel" data-panel="3">
+    <div class="card">
+      <div class="card-head"><h2>미리보기</h2><span class="hint">음악적으로 정렬된 위치를 나란히 확인</span></div>
+      <div class="preview-grid">
+        <div class="preview-cell">
+          <div class="preview-label"><span class="tag tag-a">A</span><span id="prevTimeA">0.00s</span></div>
+          <img id="prevA" alt="A 프레임" />
+        </div>
+        <div class="preview-cell">
+          <div class="preview-label"><span class="tag tag-b">B</span><span id="prevTimeB">0.00s</span></div>
+          <img id="prevB" alt="B 프레임" />
+        </div>
+      </div>
+      <div class="scrub-row">
+        <input type="range" id="scrub" min="0" max="1000" value="0" />
+        <span class="mono" id="scrubTime">0.00s</span>
+      </div>
+      <div class="nav-row">
+        <button id="prevSeg" class="btn btn-ghost">◀ 이전 전환</button>
+        <select id="segJump"></select>
+        <button id="nextSeg" class="btn btn-ghost">다음 전환 ▶</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEP 4 -->
+  <section class="panel" data-panel="4">
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="card-head"><h2>출력 설정</h2></div>
+        <div class="field-row">
+          <div class="field"><label>해상도</label><select id="resolution"></select></div>
+          <div class="field"><label>FPS</label><input type="number" id="fps" value="30" min="15" max="60" step="1" /></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>효과</label><select id="effect4"></select></div>
+          <div class="field"><label>오디오</label><select id="audioMode4"></select></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>품질 (CRF)</label><input type="range" id="crf" min="14" max="28" value="20" /><span class="mono" id="crfVal">20</span></div>
+        </div>
+        <div class="field"><label>파일 이름</label><input type="text" id="filename" value="comparison.mp4" /></div>
+        <button id="renderBtn" class="btn btn-primary wide" disabled>최종 영상 생성</button>
+        <div class="progress" id="renderProg" hidden><i id="renderBar"></i></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>결과</h2></div>
+        <div class="result-empty" id="resultEmpty">아직 생성된 영상이 없습니다</div>
+        <div id="resultBox" hidden>
+          <div class="stat-grid" id="renderStats"></div>
+          <video id="resultVideo" controls playsinline></video>
+          <a id="downloadLink" class="btn btn-primary wide" href="/api/download">영상 다운로드</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="toast-wrap" id="toasts"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

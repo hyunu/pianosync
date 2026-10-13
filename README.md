@@ -1,8 +1,10 @@
 # Piano Sync Switcher
 
 동일한 곡을 서로 다른 두 사람이 연주한 두 개의 동영상을 입력받아, 실제 **오디오 분석**으로 두 연주의
-동일한 음악적 위치를 정렬한 뒤, 사용자가 정한 간격으로 화면을 교차 전환하는 비교 영상을 생성하는
-데스크톱 앱입니다.
+동일한 음악적 위치를 정렬한 뒤, 사용자가 정한 간격으로 화면을 교차 전환하는 비교 영상을 생성합니다.
+
+동일한 코어 엔진을 **데스크톱 앱(PySide6)** 과 **웹 앱(FastAPI + 브라우저)** 두 가지 인터페이스로
+사용할 수 있습니다.
 
 - 연주 시작 전 무음, 잔향, 서로 다른 템포, **중간의 루바토/템포 변화**, 도입부·종결부 길이 차이를
   시간 왜곡(DTW)으로 처리합니다.
@@ -23,7 +25,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 3) 실행
+# 3) 실행 (데스크톱)
 python run.py
 # 또는
 pip install -e .
@@ -32,13 +34,30 @@ piano-sync-switcher
 
 FFmpeg가 PATH에 없는 경우 `.env`의 `FFMPEG_BIN`/`FFPROBE_BIN`로 경로를 지정할 수 있습니다.
 
+## 웹 버전으로 실행 (브라우저)
+
+```bash
+python run_web.py                 # http://127.0.0.1:8765 자동 안내
+# 또는
+python -m pianosync.web --host 127.0.0.1 --port 8765
+# 또는 설치형 사용 시
+piano-sync-switcher-web
+```
+
+- 로컬 서버가 뜨면 브라우저에서 위 주소를 엽니다. 분석·렌더링은 로컬 FFmpeg로 수행되고
+  브라우저는 화면(인터페이스) 역할만 합니다(업로드/다운로드 포함).
+- 웹 UI는 4단계(입력·분석 → 정렬 편집 → 미리보기 → 출력)로 구성되며, 커스텀 캔버스 파형에서
+  클릭 이동 / Ctrl-클릭 앵커 추가 / 우클릭 앵커 제거를 지원합니다.
+- 작업 폴더는 `~/.pianosync/web`(업로드/캐시/결과). `PIANOSYNC_WEB_ROOT`로 변경할 수 있습니다.
+- 진행률은 SSE(`/api/jobs/{id}/events`)로 실시간 스트리밍되며 취소를 지원합니다.
+
 ## Gemini 설정 (선택)
 
 `.env.example`을 `.env`로 복사하고 키를 입력하거나, 앱 메뉴 **도구 → Gemini 설정**에서 입력하세요.
 
 ```bash
 cp .env.example .env
-# .env 에서: GEMINI_API_KEY=..., GEMINI_MODEL=gemini-2.0-flash
+# .env 에서: GEMINI_API_KEY=..., GEMINI_MODEL=gemini-2.5-flash-lite
 ```
 
 - API 키는 **프로젝트 JSON에 저장되지 않습니다**. 환경 변수와 실행 중 설정만 사용합니다.
@@ -92,7 +111,8 @@ pytest
 - 오디오 특징(STFT/크로마/온셋/템포), 계층적 밴드 DTW(템포 변환·선행 무음·단조성), 전환 지점 생성,
   오디오 조립, 프로젝트 왕복 저장, Gemini(Mocking) 테스트 포함.
 - FFmpeg가 설치되어 있으면 `tests/test_render.py`가 합성 영상으로 실제 인코딩까지 검증합니다.
-- 현재: **29개 테스트 통과** + 샘플 영상(`samples/`) 기반 UI 엔드투엔드(분석→편집→미리보기→렌더) 확인.
+- `tests/test_web.py`가 웹 API(업로드→분석→파형/전환/앵커→프레임→렌더→다운로드)를 엔드투엔드로 검증합니다.
+- 현재: **35개 테스트 통과** + 샘플 영상(`samples/`) 기반 데스크톱/웹 엔드투엔드 확인.
 
 ## 아키텍처
 
@@ -103,12 +123,30 @@ pianosync/
 ├── ai/          Gemini REST 클라이언트(선택, 응답 검증)
 ├── video/       오디오 조립, FFmpeg 렌더(컷/블랙페이드/크로스페이드), 프레임 추출
 ├── project/     JSON 저장/복원, 입력 검증
-└── ui/          PySide6 메인 윈도우(5개 영역), 파형 위젯, 백그라운드 워커
+├── ui/          PySide6 데스크톱 UI(5개 영역), 파형 위젯, 백그라운드 워커
+└── web/         FastAPI 서버 + 브라우저 UI(정적 HTML/CSS/JS), SSE 진행률, 작업 관리
 ```
 
 - 모든 FFmpeg 호출은 안전한 인자 리스트(`shell=False`)로 실행됩니다.
 - 분석·렌더링은 백그라운드 스레드에서 수행되며 취소 가능합니다.
 - 긴 영상도 전체를 메모리에 담지 않도록 캐스트·밴드 DTW, 스트리밍 Ψ프로브/추출을 사용합니다.
+- 데스크톱·웹은 `audio/core/video/ai/project` 코어를 공유하며, 인터페이스만 다릅니다.
+
+### 웹 API 요약
+
+| 메서드 | 경로 | 설명 |
+| --- | --- | --- |
+| GET | `/api/config` | 선택지/기본값 |
+| POST | `/api/upload` | 영상 업로드(multipart) |
+| POST | `/api/analyze` | 분석 작업 시작 → `job_id` |
+| GET | `/api/jobs/{id}/events` | 진행률 SSE 스트림 |
+| GET | `/api/status` | 요약(영상/정렬/계획/AI) |
+| GET | `/api/waveform` | 파형·매핑·신뢰도·구간 데이터 |
+| POST | `/api/transitions` | 전환 설정 적용/재생성 |
+| POST | `/api/anchors` | 수동 앵커 추가/제거/설정 |
+| GET | `/api/frame` | 미리보기 프레임(PNG) |
+| POST | `/api/render` | 렌더 작업 시작 → `job_id` |
+| GET | `/api/download` | 결과 영상 다운로드 |
 
 ## 알려진 한계
 
@@ -126,4 +164,5 @@ pianosync/
 - [x] 2단계: 템포 변화, 구간 정렬, 신뢰도 평가, 온셋 스냅, 수동 앵커, 시각화
 - [x] 3단계: Gemini 통합(설정/모델/보조 분석/검증)
 - [x] 4단계: 미리보기, 앵커 편집, 프로젝트 저장·복원, 전환 정책
-- [ ] 5단계: 실제 연주 쌍 기준 타임스탬프로 정확도 측정 문서화
+- [x] 5단계: 웹 버전(FastAPI + 브라우저 UI, 공용 코어, SSE 진행률)
+- [ ] 6단계: 실제 연주 쌍 기준 타임스탬프로 정확도 측정 문서화
