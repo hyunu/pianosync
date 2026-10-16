@@ -18,7 +18,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..config import DEFAULT_GEMINI_MODEL
+from ..ai.gemini import GeminiClient
+from ..config import DEFAULT_GEMINI_MODEL, get_api_key, set_api_key
 from ..core.analysis import MAX_TRACKS
 from ..errors import PianoSyncError
 from ..video.frames import extract_frame_png
@@ -28,6 +29,44 @@ from .workspace import Workspace
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 HOME = os.path.expanduser("~")
 DEFAULT_ROOT = os.path.join(HOME, ".pianosync", "web")
+
+
+def _mask_key(key: Optional[str]) -> Optional[str]:
+    if not key:
+        return None
+    key = key.strip()
+    return "••••" + key[-4:] if len(key) > 8 else "••••"
+
+
+def _load_settings(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_settings(path: str, data: dict) -> None:
+    """Persist settings atomically with owner-only permissions (0600)."""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def _ai_settings_payload(verified: Optional[bool] = None) -> dict:
+    key = get_api_key()
+    out = {
+        "ai_configured": bool(key),
+        "api_key_masked": _mask_key(key),
+        "gemini_model": DEFAULT_GEMINI_MODEL,
+    }
+    if verified is not None:
+        out["verified"] = verified
+    return out
+
 
 #: Distinct, harmonious palette for up to MAX_TRACKS performances.
 SOURCE_COLORS = ["#34d399", "#fbbf24", "#f472b6", "#38bdf8", "#a3e635"]
@@ -83,7 +122,6 @@ CONFIG = {
         "mode": "musical",
         "quality": "balanced",
         "gemini_model": DEFAULT_GEMINI_MODEL,
-        "ai_configured": bool(os.environ.get("GEMINI_API_KEY")),
     },
 }
 
@@ -95,6 +133,10 @@ def create_app(
     root = root or os.environ.get("PIANOSYNC_WEB_ROOT", DEFAULT_ROOT)
     uploads_dir = os.path.join(root, "uploads")
     os.makedirs(uploads_dir, exist_ok=True)
+    settings_path = os.path.join(root, "settings.json")
+    settings = _load_settings(settings_path)
+    if settings.get("gemini_api_key"):
+        set_api_key(settings["gemini_api_key"])
     ws = workspace or Workspace(
         cache_dir=os.path.join(root, "cache"),
         output_dir=os.path.join(root, "outputs"),
@@ -117,9 +159,52 @@ def create_app(
     async def index() -> FileResponse:
         return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
+    @app.get("/manifest.webmanifest")
+    async def manifest() -> FileResponse:
+        return FileResponse(
+            os.path.join(STATIC_DIR, "manifest.webmanifest"),
+            media_type="application/manifest+json",
+        )
+
+    @app.get("/sw.js")
+    async def service_worker() -> FileResponse:
+        resp = FileResponse(
+            os.path.join(STATIC_DIR, "sw.js"),
+            media_type="application/javascript",
+        )
+        resp.headers["Service-Worker-Allowed"] = "/"
+        return resp
+
     @app.get("/api/config")
     async def config() -> dict:
-        return CONFIG
+        data = dict(CONFIG)
+        data["defaults"] = dict(CONFIG["defaults"])
+        data["defaults"]["ai_configured"] = bool(get_api_key())
+        data["defaults"]["api_key_masked"] = _mask_key(get_api_key())
+        return data
+
+    @app.get("/api/settings")
+    async def read_settings() -> dict:
+        return _ai_settings_payload()
+
+    @app.post("/api/settings/api_key")
+    async def update_api_key(payload: dict) -> dict:
+        key = str(payload.get("api_key") or "").strip()
+        verified: Optional[bool] = None
+        if key:
+            try:
+                verified = GeminiClient(api_key=key).verify_key()
+            except PianoSyncError:
+                verified = None  # couldn't reach Gemini; store and let the user retry
+            if verified is False:
+                raise HTTPException(
+                    status_code=400,
+                    detail="키가 유효하지 않습니다. 값을 다시 확인해 주세요.",
+                )
+        settings["gemini_api_key"] = key
+        set_api_key(key or None)
+        _save_settings(settings_path, settings)
+        return _ai_settings_payload(verified)
 
     @app.get("/api/health")
     async def health() -> dict:

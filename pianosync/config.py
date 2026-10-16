@@ -46,10 +46,28 @@ GEMINI_API_BASE = os.environ.get(
 )
 
 
+#: In-memory override populated by :func:`set_api_key` (never persisted here —
+#: callers that need persistence store it themselves, e.g. the web settings file).
+_runtime_api_key: Optional[str] = None
+
+
 def get_api_key() -> Optional[str]:
-    """Return the Gemini API key from the environment, if any."""
+    """Return the active Gemini API key.
+
+    A key set at runtime (e.g. from the web UI) takes precedence over the
+    ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY`` environment variables.
+    """
+    if _runtime_api_key:
+        return _runtime_api_key
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     return key.strip() if key and key.strip() else None
+
+
+def set_api_key(key: Optional[str]) -> None:
+    """Override the Gemini API key for the current process (set ``None``/empty
+    to fall back to the environment)."""
+    global _runtime_api_key
+    _runtime_api_key = key.strip() if key and key.strip() else None
 
 
 # ---------------------------------------------------------------------------

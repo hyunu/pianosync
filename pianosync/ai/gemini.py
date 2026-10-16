@@ -99,6 +99,27 @@ class GeminiClient:
                 "or set the GEMINI_API_KEY environment variable."
             )
 
+    def verify_key(self) -> bool:
+        """Cheaply validate the configured key by listing available models.
+
+        Returns ``True`` when the key is accepted and ``False`` when Gemini
+        rejects it. Raises :class:`GeminiError` for transport failures so
+        callers can tell "wrong key" apart from "couldn't reach the service".
+        """
+        self._require_key()
+        url = f"{self.api_base}/v1beta/models"
+        try:
+            resp = requests.get(url, params={"key": self.api_key}, timeout=self.timeout)
+        except requests.RequestException as exc:
+            raise GeminiError(f"Network error while calling Gemini: {exc}") from exc
+        if resp.status_code in (400, 401, 403):
+            return False
+        if resp.status_code == 429:
+            raise GeminiError("Gemini rate limit exceeded (HTTP 429).")
+        if resp.status_code != 200:
+            raise GeminiError(f"Gemini rejected the request (HTTP {resp.status_code}).")
+        return True
+
     # -- transport ------------------------------------------------------
     def _generate_content(
         self,

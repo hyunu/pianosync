@@ -380,6 +380,22 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: none;
 .toast.err { border-color: rgba(242, 114, 123, .45); }
 .toast.err .ic { color: var(--bad); }
 
+/* ── dialog ────────────────────────────────────────────────────────── */
+.dialog {
+  width: min(440px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--border-2);
+  border-radius: 12px; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-pop);
+}
+.dialog::backdrop { background: rgba(0, 0, 0, .55); backdrop-filter: blur(2px); }
+.dialog form { display: flex; flex-direction: column; gap: 14px; padding: 18px; }
+.dialog-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.dialog-head .ic { color: var(--fg-3); }
+.dialog-desc { font-size: 12px; line-height: 1.5; color: var(--fg-2); }
+.dialog-status { font-size: 12px; color: var(--fg-3); min-height: 16px; }
+.dialog-status.ok { color: var(--ok); }
+.dialog-status.err { color: var(--bad); }
+.dialog-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.dialog-spacer { flex: 1; }
+
 /* ── responsive ────────────────────────────────────────────────────── */
 @media (max-width: 940px) {
   .cols { grid-template-columns: 1fr; }

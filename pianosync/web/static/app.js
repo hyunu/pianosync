@@ -48,6 +48,58 @@
     setTimeout(() => el.remove(), 4600);
   }
 
+  /* ── Gemini API key ─────────────────────────────────────────────── */
+  function applyAiStatus(ai) {
+    const chip = $("#aiChip");
+    const on = !!(ai && ai.ai_configured);
+    chip.classList.toggle("on", on);
+    chip.classList.toggle("off", !on);
+    $("#aiChipText").textContent = on ? `Gemini · ${ai.gemini_model || "설정됨"}` : "Gemini 키 없음";
+    chip.title = on
+      ? `Gemini 보조 사용 중${ai.api_key_masked ? ` (${ai.api_key_masked})` : ""} · 클릭하여 변경`
+      : "클릭하여 Gemini API 키 설정";
+    const useAi = $("#useAi");
+    if (useAi) useAi.disabled = !on;
+  }
+
+  function openKeyDialog() {
+    const ai = state.ai || {};
+    const status = $("#keyStatus");
+    status.textContent = ai.ai_configured
+      ? `현재 설정됨 · ${ai.api_key_masked || "••••"}`
+      : "아직 설정되지 않았습니다.";
+    status.className = "dialog-status";
+    $("#keyInput").value = "";
+    const dlg = $("#keyDialog");
+    if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
+    setTimeout(() => $("#keyInput").focus(), 30);
+  }
+
+  async function submitApiKey(key, { clear = false } = {}) {
+    const status = $("#keyStatus");
+    const btn = $("#keySaveBtn");
+    btn.disabled = true;
+    status.className = "dialog-status";
+    status.textContent = clear ? "삭제 중…" : "확인 중…";
+    try {
+      const res = await api("/api/settings/api_key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: key }),
+      });
+      state.ai = { ...state.ai, ...res };
+      applyAiStatus(state.ai);
+      $("#keyDialog").close();
+      if (clear) toast("Gemini 키를 지웠습니다", "ok");
+      else toast(res.verified === false ? "키를 저장했습니다 (확인 실패)" : "Gemini 키를 저장했습니다", "ok");
+    } catch (err) {
+      status.className = "dialog-status err";
+      status.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   async function api(path, options) {
     const res = await fetch(path, options);
     const type = res.headers.get("content-type") || "";
@@ -88,20 +140,22 @@
     $("#crf").value = c.defaults.crf;
     $("#crfVal").textContent = c.defaults.crf;
 
-    const chip = $("#aiChip");
-    if (c.defaults.ai_configured) {
-      chip.classList.add("on");
-      $("#aiChipText").textContent = `Gemini · ${c.defaults.gemini_model}`;
-    } else {
-      chip.classList.add("off");
-      $("#aiChipText").textContent = "Gemini 키 없음";
-    }
+    state.ai = c.defaults;
+    applyAiStatus(state.ai);
 
     wireEvents();
     renderSources();
     resizeWave();
     window.addEventListener("resize", resizeWave);
+    registerServiceWorker();
     await restore();
+  }
+
+  function registerServiceWorker() {
+    if (!("serviceWorker" in navigator) || location.protocol === "file:") return;
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    });
   }
 
   async function restore() {
@@ -786,6 +840,10 @@
   function wireEvents() {
     $$(".step").forEach((el) => el.addEventListener("click", () => setStep(el.dataset.step)));
     $("#analyzeBtn").addEventListener("click", runAnalyze);
+    $("#aiChip").addEventListener("click", openKeyDialog);
+    $("#keyForm").addEventListener("submit", (e) => { e.preventDefault(); submitApiKey($("#keyInput").value.trim()); });
+    $("#keyCancelBtn").addEventListener("click", () => $("#keyDialog").close());
+    $("#keyClearBtn").addEventListener("click", () => submitApiKey("", { clear: true }));
     $("#addSourceBtn").addEventListener("click", () => $("#hiddenFile").click());
     $("#hiddenFile").addEventListener("change", (e) => { if (e.target.files.length) addFiles(Array.from(e.target.files)); e.target.value = ""; });
 

@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Piano Sync — 연주 비교 스튜디오</title>
 <meta name="description" content="같은 곡을 연주한 여러 영상을 음악적으로 정렬해 비교 영상으로 만듭니다." />
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon-180.png" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="theme-color" content="#0a0b0d" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Piano Sync" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -249,6 +257,28 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
+
+<dialog id="keyDialog" class="dialog" aria-labelledby="keyDialogTitle">
+  <form id="keyForm" method="dialog">
+    <div class="dialog-head">
+      <svg class="ic"><use href="#i-sparkles"/></svg>
+      <b id="keyDialogTitle">Gemini API 키</b>
+    </div>
+    <p class="dialog-desc">같은 곡인지 보조 확인(선택)에 사용됩니다. 키는 이 기기의 서버에만 저장되며(파일 권한 600) 브라우저로 다시 전송되지 않습니다.</p>
+    <label class="field">
+      <span class="field-label">API 키</span>
+      <input type="password" id="keyInput" autocomplete="off" spellcheck="false" placeholder="AIza..." />
+    </label>
+    <p class="dialog-status" id="keyStatus"></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn btn-ghost" id="keyClearBtn">지우기</button>
+      <span class="dialog-spacer"></span>
+      <button type="button" class="btn btn-ghost" id="keyCancelBtn">취소</button>
+      <button type="submit" class="btn btn-primary" id="keySaveBtn">저장</button>
+    </div>
+  </form>
+</dialog>
+
 <script src="/static/app.js"></script>
 </body>
 </html>

@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Piano Sync">
+  <rect width="512" height="512" rx="112" fill="#0a0b0d"/>
+  <path d="M84 256 H156 L206 120 L292 392 L342 256 H428" fill="none" stroke="#ffffff" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

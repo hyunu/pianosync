@@ -15,6 +15,7 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from pianosync.audio.extract import find_ffmpeg  # noqa: E402
+from pianosync.config import set_api_key  # noqa: E402
 from pianosync.web.server import create_app  # noqa: E402
 
 SAMPLES = os.path.join(os.path.dirname(__file__), "..", "samples")
@@ -47,9 +48,11 @@ def _wait(client: TestClient, job_id: str, timeout: float = 180.0) -> dict:
 
 @pytest.fixture()
 def client(tmp_path):
+    set_api_key(None)  # isolate the process-wide runtime key between tests
     app = create_app(root=str(tmp_path))
     with TestClient(app) as test_client:
         yield test_client
+    set_api_key(None)
 
 
 def test_health_and_config(client):
@@ -65,6 +68,56 @@ def test_index_served(client):
     assert "Piano Sync" in res.text
     assert "/static/app.js" in res.text
     assert "/static/styles.css" in res.text
+    assert "/manifest.webmanifest" in res.text
+
+
+def test_api_key_settings(client, tmp_path, monkeypatch):
+    from pianosync.ai.gemini import GeminiClient
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    set_api_key(None)
+
+    # no key configured yet
+    assert client.get("/api/settings").json()["ai_configured"] is False
+
+    # a key Gemini rejects is refused
+    monkeypatch.setattr(GeminiClient, "verify_key", lambda self: False)
+    bad = client.post("/api/settings/api_key", json={"api_key": "AIza-invalid-0000"})
+    assert bad.status_code == 400
+
+    # a valid key is stored, masked, and persisted with owner-only perms
+    monkeypatch.setattr(GeminiClient, "verify_key", lambda self: True)
+    ok = client.post("/api/settings/api_key", json={"api_key": "AIzaSyTESTKEY1234"})
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["ai_configured"] is True
+    assert body["api_key_masked"].endswith("1234")
+    assert "TESTKEY" not in body["api_key_masked"]
+    settings_file = tmp_path / "settings.json"
+    assert settings_file.exists()
+    assert oct(settings_file.stat().st_mode & 0o777) == "0o600"
+    assert client.get("/api/config").json()["defaults"]["ai_configured"] is True
+
+    # clearing reverts to unconfigured
+    cleared = client.post("/api/settings/api_key", json={"api_key": ""})
+    assert cleared.json()["ai_configured"] is False
+
+
+def test_pwa_assets(client):
+    manifest = client.get("/manifest.webmanifest")
+    assert manifest.status_code == 200
+    assert "manifest" in manifest.headers["content-type"]
+    assert manifest.json()["start_url"] == "/"
+    assert manifest.json()["display"] == "standalone"
+
+    sw = client.get("/sw.js")
+    assert sw.status_code == 200
+    assert sw.headers["service-worker-allowed"] == "/"
+
+    icon = client.get("/static/icons/icon-192.png")
+    assert icon.status_code == 200
+    assert icon.content[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 def test_upload(client, tmp_path):
