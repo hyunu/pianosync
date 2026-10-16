@@ -19,9 +19,7 @@
     plan: null,
     scrub: 0,
     jobStream: null,
-    previewTimer: null,
-    previewSeen: false,
-    planApplied: false,
+    hoverSnap: null,
     result: null,
     step: 1,
   };
@@ -85,8 +83,6 @@
     fillSelect($("#mode"), c.mode, c.defaults.mode);
     fillSelect($("#effect"), c.effect, c.defaults.effect);
     fillSelect($("#audioMode"), c.audio_mode, c.defaults.audio_mode);
-    fillSelect($("#effect4"), c.effect, c.defaults.effect);
-    fillSelect($("#audioMode4"), c.audio_mode, c.defaults.audio_mode);
     fillSelect($("#resolution"), c.resolution, "1920x1080");
     $("#interval").value = c.defaults.interval_seconds;
     $("#crf").value = c.defaults.crf;
@@ -115,7 +111,7 @@
         applyStatus(status);
         await loadWaveform();
         await loadPlan();
-        setStep(2);
+        setStep(1);
       } else if (status.sources) {
         applyStatus(status);
       }
@@ -147,7 +143,7 @@
 
     const can = state.sources.length < maxSources();
     $("#addSourceBtn").disabled = !can;
-    $("#analyzeBtn").disabled = !(state.sources.length >= 2 && !state.sources.some((s) => s.uploading));
+    $("#analyzeBtn").disabled = !(state.sources.length >= 2 && state.sources.every((s) => s.path) && !state.sources.some((s) => s.uploading));
     renderRailSources();
     renderStartWith();
   }
@@ -275,7 +271,7 @@
         await loadWaveform(); await loadPlan();
         setStatus("ok", "정렬 완료", null);
         toast("분석이 끝났습니다", "ok");
-        setStep(2);
+        setStep(1);
       },
       onError: (err) => {
         $("#runCard").hidden = true;
@@ -293,7 +289,7 @@
     if (state.sourceMeta.length && state.sources.length === 0) {
       // reflect an already-analyzed workspace into the editable list
       state.sources = state.sourceMeta.map((s, i) => ({
-        id: "s" + i, path: null, name: s.name, size: 0, uploading: false,
+        id: "s" + i, path: s.path || null, name: s.name, size: 0, uploading: false,
       }));
       renderSources();
     }
@@ -333,9 +329,7 @@
   function stepDone(n) {
     switch (n) {
       case 1: return state.ready;
-      case 2: return state.ready && !!(state.plan && state.plan.segments && state.plan.segments.length);
-      case 3: return state.previewSeen && state.ready;
-      case 4: return !!state.result;
+      case 2: return !!state.result;
       default: return false;
     }
   }
@@ -395,7 +389,6 @@
       if (state.wave && state.wave.ready) { $("#waveEmpty").hidden = true; resizeWave(); }
     } catch (_) { state.wave = null; }
     renderLegend();
-    renderAnchors();
     drawWave();
   }
 
@@ -405,29 +398,8 @@
     const parts = (state.wave.envs || []).map((e) =>
       `<span class="leg"><i class="swatch sq" style="background:${color(e.index)}"></i>${e.label} 파형 레인</span>`);
     parts.push(`<span class="leg"><i class="swatch sq" style="background:var(--bad)"></i>저신뢰 구간</span>`);
-    parts.push(`<span class="leg"><i class="swatch sq" style="background:var(--warn)"></i>수동 앵커</span>`);
     parts.push(`<span class="leg"><i class="swatch" style="background:var(--fg-3)"></i>매핑 곡선 · 신뢰도</span>`);
     leg.innerHTML = parts.join("");
-  }
-
-  function renderAnchors() {
-    const list = $("#anchorList");
-    if (!list) return;
-    const anchors = (state.wave && state.wave.anchors) || [];
-    $("#anchorCount").textContent = anchors.length;
-    list.innerHTML = "";
-    if (!anchors.length) {
-      list.innerHTML = `<span class="anchor-empty">파형을 Shift-클릭하거나 ‘앵커 추가’를 누르면 그 위치의 정렬을 고정합니다.</span>`;
-      return;
-    }
-    anchors.forEach(([a, b], i) => {
-      const chip = document.createElement("span");
-      chip.className = "anchor-chip";
-      chip.innerHTML = `<span class="mono">${fmt(a)}</span> <span style="color:var(--fg-3)">→</span> <span class="mono">${fmt(b)}</span>
-        <button type="button" title="이 앵커 제거">${icon("x")}</button>`;
-      chip.querySelector("button").addEventListener("click", () => removeAnchor(i));
-      list.appendChild(chip);
-    });
   }
 
   function drawWave() {
@@ -464,7 +436,7 @@
     });
 
     // onset ticks along the top of the alignment lane
-    ctx.strokeStyle = "rgba(231,233,236,.2)";
+    ctx.strokeStyle = "rgba(231,233,236,.28)";
     ctx.lineWidth = 1;
     ctx.beginPath();
     (w.onsets || []).forEach((t) => { const x = g.xA(t); ctx.moveTo(x, g.alignTop); ctx.lineTo(x, g.alignTop + 5); });
@@ -519,14 +491,14 @@
     ctx.strokeStyle = "rgba(231,233,236,.12)";
     ctx.strokeRect(g.padL + .5, g.bandTop + .5, g.innerW - 1, (g.bandBot - g.bandTop) - 1);
 
-    // anchors
-    (w.anchors || []).forEach(([a]) => {
-      const x = g.xA(a), y = (g.bandTop + g.bandBot) / 2;
-      ctx.fillStyle = "#e3b341";
-      ctx.beginPath();
-      ctx.moveTo(x, y - 6); ctx.lineTo(x + 6, y); ctx.lineTo(x, y + 6); ctx.lineTo(x - 6, y);
-      ctx.closePath(); ctx.fill();
-    });
+    // onset snap guide under the cursor
+    if (state.hoverSnap != null) {
+      const x = g.xA(state.hoverSnap);
+      ctx.strokeStyle = "rgba(227,179,65,.7)";
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(x, g.bandTop); ctx.lineTo(x, g.alignBot); ctx.stroke();
+      ctx.setLineDash([]);
+    }
 
     drawPlayhead(ctx, g);
   }
@@ -598,54 +570,60 @@
     return clamp(waveGeom().tA(ev.clientX - rect.left), 0, waveGeom().aMax);
   }
 
-  function nearestAnchor(clientX) {
-    if (!state.wave) return -1;
-    const rect = $("#wave").getBoundingClientRect();
-    let best = -1, bestD = 12;
-    (state.wave.anchors || []).forEach(([a], i) => {
-      const d = Math.abs(waveGeom().xA(a) - (clientX - rect.left));
-      if (d < bestD) { bestD = d; best = i; }
+  // Snap a click (pixel position) to the nearest musical onset. Returns the
+  // onset time, or null when nothing is close enough.
+  const SNAP_PX = 9;
+  function nearestOnset(clientX) {
+    if (!(state.wave && state.wave.ready)) return null;
+    const g = waveGeom();
+    const x = clientX - $("#wave").getBoundingClientRect().left;
+    let bestT = null, bestD = SNAP_PX;
+    (state.wave.onsets || []).forEach((t) => {
+      const d = Math.abs(g.xA(t) - x);
+      if (d < bestD) { bestD = d; bestT = t; }
     });
-    return best;
+    return bestT;
   }
 
   function wireWave() {
     const canvas = $("#wave");
-    canvas.addEventListener("mousemove", (ev) => {
+    let dragging = false, dragMoved = false, dragStartX = 0;
+
+    const onDrag = (ev) => {
+      if (!dragging) return;
+      if (Math.abs(ev.clientX - dragStartX) > 3) dragMoved = true;
+      if (dragMoved) seekTo(waveTimeFromEvent(ev));
+    };
+    const endDrag = (ev) => {
+      if (!dragging) return;
+      dragging = false;
+      window.removeEventListener("mousemove", onDrag);
+      window.removeEventListener("mouseup", endDrag);
+      if (!dragMoved) {
+        const snapped = nearestOnset(ev.clientX);
+        seekTo(snapped == null ? waveTimeFromEvent(ev) : snapped);
+      }
+    };
+
+    canvas.addEventListener("mousedown", (ev) => {
       if (!(state.wave && state.wave.ready)) return;
-      $("#timeReadout").textContent = fmt(waveTimeFromEvent(ev));
-    });
-    canvas.addEventListener("click", async (ev) => {
-      if (!(state.wave && state.wave.ready)) return;
-      const t = waveTimeFromEvent(ev);
-      if (ev.shiftKey) await addAnchor(t);
-      else seekTo(t);
-    });
-    canvas.addEventListener("contextmenu", async (ev) => {
+      if (ev.button !== 0) return;
+      dragging = true; dragMoved = false; dragStartX = ev.clientX;
+      if (state.hoverSnap != null) { state.hoverSnap = null; drawWave(); }
+      window.addEventListener("mousemove", onDrag);
+      window.addEventListener("mouseup", endDrag);
       ev.preventDefault();
-      if (!(state.wave && state.wave.ready)) return;
-      const idx = nearestAnchor(ev.clientX);
-      if (idx >= 0) await removeAnchor(idx);
     });
-
-    const addBtn = $("#addAnchorBtn");
-    if (addBtn) addBtn.addEventListener("click", () => {
-      if (state.wave && state.wave.ready) addAnchor(state.scrub);
+    canvas.addEventListener("mousemove", (ev) => {
+      if (!(state.wave && state.wave.ready) || dragging) return;
+      const snapped = nearestOnset(ev.clientX);
+      if (state.hoverSnap !== snapped) { state.hoverSnap = snapped; drawWave(); }
+      const t = snapped == null ? waveTimeFromEvent(ev) : snapped;
+      $("#timeReadout").textContent = fmt(t) + (snapped == null ? "" : " ⌁");
     });
-    const clearBtn = $("#clearAnchorsBtn");
-    if (clearBtn) clearBtn.addEventListener("click", clearAnchors);
-  }
-
-  async function clearAnchors() {
-    if (!(state.wave && state.wave.ready)) return;
-    try {
-      const res = await api("/api/anchors", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ anchors: [] }),
-      });
-      await refreshPlan(res);
-      toast("앵커를 모두 지웠습니다", "ok");
-    } catch (err) { toast("앵커 제거 실패: " + err.message, "err"); }
+    canvas.addEventListener("mouseleave", () => {
+      if (state.hoverSnap != null) { state.hoverSnap = null; drawWave(); }
+    });
   }
 
   /* ── plan ────────────────────────────────────────────────────────── */
@@ -701,40 +679,10 @@
       warns.insertAdjacentHTML("beforeend", `<div class="warn">${icon("alert")}<span>${esc(wd)}</span></div>`);
     });
 
-    const jump = $("#segJump");
-    jump.innerHTML = "";
-    plan.segments.forEach((s, i) => {
-      const o = document.createElement("option");
-      o.value = i; o.textContent = `#${i + 1} · ${s.source} · ${fmt(s.a_start)}`;
-      jump.appendChild(o);
-    });
-
     // refresh reference readout
     $("#statusSegs").textContent = `${plan.segments.length}구간`;
     drawWave();
     markSteps();
-  }
-
-  async function addAnchor(aTime) {
-    try {
-      const res = await api("/api/anchors", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "add", a: aTime }),
-      });
-      await refreshPlan(res);
-      toast(`앵커 추가 @ ${fmt(aTime)}`, "ok");
-    } catch (err) { toast("앵커 추가 실패: " + err.message, "err"); }
-  }
-
-  async function removeAnchor(index) {
-    try {
-      const res = await api("/api/anchors", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "remove", index }),
-      });
-      await refreshPlan(res);
-      toast("앵커 제거", "ok");
-    } catch (err) { toast("앵커 제거 실패: " + err.message, "err"); }
   }
 
   /* ── preview ─────────────────────────────────────────────────────── */
@@ -745,76 +693,38 @@
     return map ? interp(map.a, map.b, refTime) : refTime;
   }
 
-  function syncScrub() {
-    const max = state.wave ? state.wave.a_duration : 1;
-    $("#scrub").value = Math.round((state.scrub / max) * 1000);
-    $("#scrubTime").textContent = fmt(state.scrub);
-  }
-
-  function schedulePreview() {
-    clearTimeout(state.previewTimer);
-    state.previewTimer = setTimeout(refreshPreview, 120);
-  }
-
   function seekTo(t) {
     state.scrub = clamp(t, 0, state.wave ? state.wave.a_duration : t);
-    syncScrub(); drawWave(); schedulePreview();
-    if (state.wave) {
-      const idx = (state.wave.segments || []).findIndex((s) => state.scrub >= s.a_start && state.scrub < s.a_end);
-      if (idx >= 0) $("#segJump").value = String(idx);
-      $$("#segList .seg").forEach((el, i) => el.classList.toggle("is-current", i === idx));
-    }
+    drawWave();
+    const idx = state.wave
+      ? (state.wave.segments || []).findIndex((s) => state.scrub >= s.a_start && state.scrub < s.a_end)
+      : -1;
+    $$("#segList .seg").forEach((el, i) => el.classList.toggle("is-current", i === idx));
   }
 
-  function renderPreviewGrid() {
-    const grid = $("#previewGrid");
-    grid.innerHTML = "";
-    const n = state.sourceMeta.length || 2;
-    for (let k = 0; k < n; k++) {
-      const meta = state.sourceMeta[k] || { label: String.fromCharCode(65 + k), name: "" };
-      const cell = document.createElement("div");
-      cell.className = "preview-cell";
-      cell.innerHTML = `
-        <div class="preview-head">
-          <span class="lab"><i class="dot" style="background:${color(k)}"></i>${meta.label}</span>
-          <span class="t" id="pt${k}">0.00s</span>
-        </div>
-        <div class="frame"><img id="pf${k}" alt="${meta.label} 프레임" /></div>`;
-      grid.appendChild(cell);
-    }
-    refreshPreview();
-  }
-
-  function refreshPreview() {
-    if (!(state.wave && state.wave.ready)) return;
-    const n = state.sourceMeta.length || 2;
-    const stamp = Date.now();
-    for (let k = 0; k < n; k++) {
-      const t = sourceTime(k, state.scrub);
-      const tEl = $(`#pt${k}`); const img = $(`#pf${k}`);
-      if (!tEl || !img) continue;
-      tEl.textContent = fmt(clamp(t, 0, 1e9));
-      img.src = `/api/frame?index=${k}&t=${t.toFixed(3)}&w=460&_=${stamp}`;
-    }
-  }
-
-  function stepSegment(dir) {
-    const segs = state.wave?.segments || [];
-    if (!segs.length) return;
-    let idx = segs.findIndex((s) => state.scrub < s.a_start);
-    idx = idx < 0 ? segs.length - 1 : Math.max(0, idx - 1);
-    const target = segs[clamp(idx + dir, 0, segs.length - 1)];
-    if (target) seekTo(target.a_start);
-  }
 
   /* ── render ──────────────────────────────────────────────────────── */
+  function setRenderProgress(msg, progress) {
+    if (msg != null) $("#renderMsg").textContent = msg;
+    const pct = progress == null ? 0 : Math.round(clamp(progress, 0, 1) * 100);
+    $("#renderProg").classList.toggle("is-indeterminate", progress == null);
+    $("#renderBar").style.width = progress == null ? "40%" : `${pct}%`;
+    $("#renderPct").textContent = progress == null ? "" : `${pct}%`;
+  }
+
   async function runRender() {
     const [w, h] = ($("#resolution").value || "1920x1080").split("x").map(Number);
     $("#renderProg").hidden = false;
-    $("#renderMsg").textContent = "렌더링을 준비하는 중…";
+    setRenderProgress("렌더링을 준비하는 중…", 0);
     setStatus("busy", "렌더링 중…", 0);
     let jobId;
     try {
+      try {
+        await api("/api/transitions", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(collectTransitionSettings()),
+        });
+      } catch (_) {}
       const res = await api("/api/render", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -822,9 +732,9 @@
           width: w, height: h,
           fps: Number($("#fps").value) || 30,
           crf: Number($("#crf").value),
-          effect: $("#effect4").value,
-          audio_mode: $("#audioMode4").value,
-          include_audio: $("#audioMode4").value !== "none",
+          effect: $("#effect").value,
+          audio_mode: $("#audioMode").value,
+          include_audio: $("#audioMode").value !== "none",
         }),
       });
       jobId = res.job_id;
@@ -834,9 +744,9 @@
       return;
     }
     watchJob(jobId, {
-      onProgress: (job) => { setStatus("busy", job.message || "렌더링 중…", job.progress); $("#renderMsg").textContent = job.message || "렌더링 중…"; },
+      onProgress: (job) => { setStatus("busy", job.message || "렌더링 중…", job.progress); setRenderProgress(job.message || "렌더링 중…", job.progress); },
       onDone: (job) => {
-        $("#renderProg").hidden = true;
+        $("#renderProg").hidden = true; setRenderProgress(null, 0);
         showResult(job.result);
         setStatus("ok", "영상 생성 완료", null);
         toast("영상 생성이 완료되었습니다", "ok");
@@ -868,9 +778,7 @@
     state.step = Number(n);
     $$(".step").forEach((el) => el.classList.toggle("is-active", el.dataset.step === String(n)));
     $$(".panel").forEach((el) => el.classList.toggle("is-active", el.dataset.panel === String(n)));
-    if (Number(n) === 2) { resizeWave(); drawWave(); }
-    if (Number(n) === 3) { if (state.ready) state.previewSeen = true; renderPreviewGrid(); syncScrub(); }
-    if (Number(n) === 4) { /* no-op */ }
+    if (Number(n) === 1) { resizeWave(); drawWave(); }
     markSteps();
   }
 
@@ -889,37 +797,38 @@
 
     wireWave();
 
-    $("#applyBtn").addEventListener("click", async () => {
-      try {
-        const res = await api("/api/transitions", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(collectTransitionSettings()),
-        });
-        await refreshPlan(res);
-        toast("전환 지점을 갱신했습니다", "ok");
-        if (!state.planApplied && state.step === 2) {
-          state.planApplied = true;
-          setStep(3);
-        }
-      } catch (err) { toast("갱신 실패: " + err.message, "err"); }
+    // Any transition setting change re-materialises the plan (debounced).
+    let planTimer = null;
+    const regeneratePlan = () => {
+      if (!state.ready) return;
+      clearTimeout(planTimer);
+      planTimer = setTimeout(async () => {
+        try {
+          const res = await api("/api/transitions", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(collectTransitionSettings()),
+          });
+          await refreshPlan(res);
+        } catch (err) { toast("전환 지점 재계산 실패: " + err.message, "err"); }
+      }, 300);
+    };
+    ["mode", "effect", "audioMode", "startWith", "snap", "interval"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("change", regeneratePlan);
     });
 
     $("#renderBtn").addEventListener("click", runRender);
     $("#crf").addEventListener("input", (e) => { $("#crfVal").textContent = e.target.value; });
-    $("#effect4").addEventListener("change", (e) => { $("#effect").value = e.target.value; });
-    $("#audioMode4").addEventListener("change", (e) => { $("#audioMode").value = e.target.value; });
 
-    $("#scrub").addEventListener("input", (e) => {
-      const max = state.wave ? state.wave.a_duration : 1;
-      state.scrub = (e.target.value / 1000) * max;
-      $("#scrubTime").textContent = fmt(state.scrub);
-      drawWave(); schedulePreview();
-    });
-    $("#prevSeg").addEventListener("click", () => stepSegment(-1));
-    $("#nextSeg").addEventListener("click", () => stepSegment(1));
-    $("#segJump").addEventListener("change", (e) => {
-      const s = state.wave?.segments[Number(e.target.value)];
-      if (s) seekTo(s.a_start);
+    // ← / → move the playhead (10ms, Shift = 100ms)
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
+      const tag = (ev.target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "select" || tag === "textarea") return;
+      if (state.step !== 1 || !(state.wave && state.wave.ready)) return;
+      ev.preventDefault();
+      const delta = (ev.key === "ArrowRight" ? 1 : -1) * (ev.shiftKey ? 0.1 : 0.01);
+      seekTo(state.scrub + delta);
     });
 
     $("#newBtn").addEventListener("click", async () => {

@@ -180,27 +180,6 @@ class Workspace:
         if "alternate" in s:
             cfg.alternate = bool(s["alternate"])
 
-    def set_anchors(self, anchors: List[Tuple[float, float]]) -> dict:
-        with self.lock:
-            self.manual_points = [(float(a), float(b)) for a, b in anchors]
-        return self.regenerate()
-
-    def add_anchor(self, a_time: float, b_time: Optional[float] = None) -> dict:
-        if not self.has_alignment:
-            raise ValueError("분석을 먼저 실행하세요.")
-        if b_time is None:
-            second = self.tracks[1]
-            b_time = second.source_time(a_time)
-        points = list(self.manual_points)
-        points.append((float(a_time), float(b_time)))
-        return self.set_anchors(points)
-
-    def remove_anchor(self, index: int) -> dict:
-        points = list(self.manual_points)
-        if 0 <= index < len(points):
-            points.pop(index)
-        return self.set_anchors(points)
-
     # -- rendering ------------------------------------------------------
     def render(self, options: Optional[dict] = None, progress=None) -> RenderResult:
         if self.plan is None or not self.has_alignment:
@@ -253,6 +232,7 @@ class Workspace:
             "index": track.index,
             "label": track.label,
             "name": os.path.basename(track.path),
+            "path": track.path,
             "width": track.media.width,
             "height": track.media.height,
             "fps": round(track.media.fps, 2),

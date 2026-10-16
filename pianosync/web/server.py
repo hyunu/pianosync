@@ -199,24 +199,6 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
-    @app.post("/api/anchors")
-    async def anchors(payload: dict) -> dict:
-        try:
-            if "anchors" in payload:
-                return ws.set_anchors(
-                    [(float(p[0]), float(p[1])) for p in payload["anchors"]]
-                )
-            if payload.get("action") == "add":
-                return ws.add_anchor(
-                    float(payload["a"]),
-                    float(payload["b"]) if payload.get("b") is not None else None,
-                )
-            if payload.get("action") == "remove":
-                return ws.remove_anchor(int(payload["index"]))
-        except (ValueError, KeyError, TypeError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        raise HTTPException(status_code=400, detail="알 수 없는 앵커 요청입니다.")
-
     # -- render jobs ----------------------------------------------------
     @app.post("/api/render")
     async def render(payload: dict) -> dict:

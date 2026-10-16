@@ -111,11 +111,6 @@ def test_full_workflow(client):
     plan = client.post("/api/transitions", json={"interval_seconds": 3, "effect": "cut"}).json()
     assert plan["plan"]["segments"]
 
-    added = client.post("/api/anchors", json={"action": "add", "a": 3.0}).json()
-    assert added["anchor_count"] == 1
-    removed = client.post("/api/anchors", json={"action": "remove", "index": 0}).json()
-    assert removed["anchor_count"] == 0
-
     frame = client.get("/api/frame", params={"side": "a", "t": 1.0, "w": 200})
     assert frame.status_code == 200
     assert frame.headers["content-type"] == "image/png"
