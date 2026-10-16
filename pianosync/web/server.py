@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 
 from ..config import DEFAULT_GEMINI_MODEL
+from ..core.analysis import MAX_TRACKS
 from ..errors import PianoSyncError
 from ..video.frames import extract_frame_png
 from .jobs import JobManager
@@ -28,7 +29,12 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 HOME = os.path.expanduser("~")
 DEFAULT_ROOT = os.path.join(HOME, ".pianosync", "web")
 
+#: Distinct, harmonious palette for up to MAX_TRACKS performances.
+SOURCE_COLORS = ["#34d399", "#fbbf24", "#f472b6", "#38bdf8", "#a3e635"]
+
 CONFIG = {
+    "max_sources": MAX_TRACKS,
+    "source_colors": SOURCE_COLORS,
     "quality": [
         {"value": "fast", "label": "빠르게"},
         {"value": "balanced", "label": "균형"},
@@ -42,11 +48,17 @@ CONFIG = {
         {"value": "cut", "label": "하드 컷"},
         {"value": "crossfade", "label": "크로스페이드"},
         {"value": "fadeblack", "label": "블랙 페이드"},
+        {"value": "fadewhite", "label": "화이트 페이드"},
+        {"value": "fadegrays", "label": "그레이 페이드"},
+        {"value": "dissolve", "label": "디졸브"},
+        {"value": "slideleft", "label": "좌측 슬라이드"},
+        {"value": "slideright", "label": "우측 슬라이드"},
+        {"value": "circleopen", "label": "원형 열기"},
     ],
     "audio_mode": [
-        {"value": "A", "label": "영상 A"},
-        {"value": "B", "label": "영상 B"},
-        {"value": "aligned", "label": "A/B 정렬 전환"},
+        {"value": "A", "label": "기준 영상(A) 연속"},
+        {"value": "B", "label": "두 번째 영상(B)"},
+        {"value": "aligned", "label": "화면 따라 전환"},
         {"value": "none", "label": "오디오 없음"},
     ],
     "resolution": [
@@ -145,8 +157,14 @@ def create_app(
 
     @app.post("/api/analyze")
     async def analyze(payload: dict) -> dict:
-        path_a = _require_file(payload.get("path_a"))
-        path_b = _require_file(payload.get("path_b"))
+        raw_paths = payload.get("paths")
+        if raw_paths is None:
+            raw_paths = [payload.get("path_a"), payload.get("path_b")]
+        paths = [_require_file(p) for p in raw_paths if p]
+        if len(paths) < 2:
+            raise HTTPException(status_code=400, detail="최소 2개의 영상이 필요합니다.")
+        if len(paths) > MAX_TRACKS:
+            raise HTTPException(status_code=400, detail=f"최대 {MAX_TRACKS}개까지 지원합니다.")
         quality = payload.get("quality", "balanced")
         use_ai = bool(payload.get("use_ai", True))
         ws.transition.interval_seconds = float(
@@ -155,7 +173,7 @@ def create_app(
         job = jobs.create("analyze")
 
         def work(progress) -> dict:
-            return ws.analyze(path_a, path_b, quality=quality, use_ai=use_ai, progress=progress)
+            return ws.analyze_paths(paths, quality=quality, use_ai=use_ai, progress=progress)
 
         jobs.run(job, work)
         return {"job_id": job.id}
@@ -255,17 +273,29 @@ def create_app(
         )
 
     # -- media / frames -------------------------------------------------
+    def _source_path(index: int, side: str) -> str:
+        if not ws.paths:
+            raise HTTPException(status_code=404, detail="영상이 없습니다.")
+        if index >= 0:
+            if index < len(ws.paths):
+                return ws.paths[index]
+            raise HTTPException(status_code=404, detail="영상이 없습니다.")
+        idx = 0 if side == "a" else 1
+        if 0 <= idx < len(ws.paths):
+            return ws.paths[idx]
+        raise HTTPException(status_code=404, detail="영상이 없습니다.")
+
     @app.get("/api/media")
-    async def media(side: str = "a") -> FileResponse:
-        path = ws.path_a if side == "a" else ws.path_b
-        if not path or not os.path.isfile(path):
+    async def media(side: str = "a", index: int = -1) -> FileResponse:
+        path = _source_path(index, side)
+        if not os.path.isfile(path):
             raise HTTPException(status_code=404, detail="영상이 없습니다.")
         return FileResponse(path, media_type="video/mp4")
 
     @app.get("/api/frame")
-    async def frame(side: str = "a", t: float = 0.0, w: int = 420) -> Response:
-        path = ws.path_a if side == "a" else ws.path_b
-        if not path or not os.path.isfile(path):
+    async def frame(side: str = "a", t: float = 0.0, w: int = 420, index: int = -1) -> Response:
+        path = _source_path(index, side)
+        if not os.path.isfile(path):
             raise HTTPException(status_code=404, detail="영상이 없습니다.")
         try:
             data = extract_frame_png(path, t, width=max(80, min(w, 960)))

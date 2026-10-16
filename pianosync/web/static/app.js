@@ -1,69 +1,78 @@
-/* Piano Sync Switcher — web UI */
+/* Piano Sync — web studio (vanilla JS, no build step) */
 (() => {
   "use strict";
 
-  const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+  /* ── helpers ─────────────────────────────────────────────────────── */
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => Array.from(document.querySelectorAll(s));
   const fmt = (t, d = 2) => `${Number(t).toFixed(d)}s`;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const icon = (n) => `<svg class="ic"><use href="#i-${n}"/></svg>`;
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   const state = {
-    pathA: null,
-    pathB: null,
     config: null,
-    wave: null,
+    sources: [],        // {id, path, name, size, uploading}
+    sourceMeta: [],     // from /api/status: {index,label,name,duration,tempo_bpm,...}
     ready: false,
-    scrubTime: 0,
-    anchors: [],
+    wave: null,
+    plan: null,
+    scrub: 0,
     jobStream: null,
     previewTimer: null,
+    previewSeen: false,
+    planApplied: false,
+    result: null,
+    step: 1,
   };
 
-  const COLORS = { a: "#a78bfa", b: "#67e8f9", low: "#fb7185", warn: "#fbbf24" };
+  const color = (k) => {
+    const cols = state.config?.source_colors || ["#3ecf8e"];
+    return cols[((k % cols.length) + cols.length) % cols.length];
+  };
 
-  /* ---------------- utilities ---------------- */
   function interp(xs, ys, x) {
-    if (!xs || xs.length === 0) return 0;
+    if (!xs || !xs.length) return 0;
     if (x <= xs[0]) return ys[0];
     if (x >= xs[xs.length - 1]) return ys[ys.length - 1];
     let lo = 0, hi = xs.length - 1;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (xs[mid] <= x) lo = mid; else hi = mid;
-    }
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; xs[m] <= x ? (lo = m) : (hi = m); }
     const span = xs[hi] - xs[lo] || 1;
     return ys[lo] + (ys[hi] - ys[lo]) * ((x - xs[lo]) / span);
   }
 
-  function toast(message, kind = "") {
+  function toast(msg, kind = "") {
     const el = document.createElement("div");
     el.className = `toast ${kind}`;
-    el.textContent = message;
+    el.innerHTML = `${kind === "err" ? icon("alert") : kind === "ok" ? icon("check") : icon("layers")}<span>${esc(msg)}</span>`;
     $("#toasts").appendChild(el);
+    setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; }, 4200);
     setTimeout(() => el.remove(), 4600);
   }
 
   async function api(path, options) {
     const res = await fetch(path, options);
+    const type = res.headers.get("content-type") || "";
     if (!res.ok) {
       let detail = res.statusText;
       try { detail = (await res.json()).detail || detail; } catch (_) {}
       throw new Error(detail);
     }
-    return res.headers.get("content-type")?.includes("application/json") ? res.json() : res;
+    return type.includes("application/json") ? res.json() : res;
   }
 
-  /* ---------------- config / bootstrap ---------------- */
   function fillSelect(el, items, value) {
+    if (!el) return;
     el.innerHTML = "";
     items.forEach((it) => {
-      const opt = document.createElement("option");
-      opt.value = it.value;
-      opt.textContent = it.label;
-      if (it.value === value) opt.selected = true;
-      el.appendChild(opt);
+      const o = document.createElement("option");
+      o.value = it.value; o.textContent = it.label;
+      if (it.value === value) o.selected = true;
+      el.appendChild(o);
     });
   }
 
+  /* ── boot ────────────────────────────────────────────────────────── */
   async function boot() {
     try {
       state.config = await api("/api/config");
@@ -85,14 +94,15 @@
 
     const chip = $("#aiChip");
     if (c.defaults.ai_configured) {
-      chip.className = "chip on";
+      chip.classList.add("on");
       $("#aiChipText").textContent = `Gemini · ${c.defaults.gemini_model}`;
     } else {
-      chip.className = "chip off";
+      chip.classList.add("off");
       $("#aiChipText").textContent = "Gemini 키 없음";
     }
 
     wireEvents();
+    renderSources();
     resizeWave();
     window.addEventListener("resize", resizeWave);
     await restore();
@@ -106,47 +116,103 @@
         await loadWaveform();
         await loadPlan();
         setStep(2);
+      } else if (status.sources) {
+        applyStatus(status);
       }
     } catch (_) { /* fresh workspace */ }
   }
 
-  /* ---------------- uploads ---------------- */
-  function wireDrop(dropId, inputId, nameId, side) {
-    const drop = $(dropId), input = $(inputId), nameEl = $(nameId);
-    drop.addEventListener("click", () => input.click());
-    ["dragover", "dragenter"].forEach((e) =>
-      drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.add("drag"); }));
-    ["dragleave", "drop"].forEach((e) =>
-      drop.addEventListener(e, () => drop.classList.remove("drag")));
-    drop.addEventListener("drop", (ev) => {
-      ev.preventDefault();
-      if (ev.dataTransfer.files[0]) handleFile(ev.dataTransfer.files[0], nameEl, side);
+  /* ── sources ─────────────────────────────────────────────────────── */
+  function maxSources() { return state.config?.max_sources || 5; }
+
+  function renderSources() {
+    const list = $("#sourceList");
+    list.innerHTML = "";
+    state.sources.forEach((src, i) => {
+      const el = document.createElement("div");
+      el.className = "source" + (i === 0 ? " is-ref" : "") + (src.uploading ? " is-uploading" : "");
+      el.style.setProperty("--c", color(i));
+      el.innerHTML = `
+        <span class="source-badge" style="background:${color(i)}">${String.fromCharCode(65 + i)}</span>
+        <div class="source-info">
+          <span class="source-name">${esc(src.name)}</span>
+          <span class="source-meta">${src.uploading ? "업로드 중…" : src.size ? formatBytes(src.size) : ""}${i === 0 ? " · 기준" : ""}</span>
+        </div>
+        <div class="source-tags">${i === 0 ? `<span class="tag tag-ok">기준</span>` : ""}</div>
+        <button class="source-remove" type="button" title="제거" ${src.uploading ? "disabled" : ""}>${icon("x")}</button>
+        <div class="source-progress"><i></i></div>`;
+      el.querySelector(".source-remove").addEventListener("click", () => removeSource(src.id));
+      list.appendChild(el);
     });
-    input.addEventListener("change", () => {
-      if (input.files[0]) handleFile(input.files[0], nameEl, side);
+
+    const can = state.sources.length < maxSources();
+    $("#addSourceBtn").disabled = !can;
+    $("#analyzeBtn").disabled = !(state.sources.length >= 2 && !state.sources.some((s) => s.uploading));
+    renderRailSources();
+    renderStartWith();
+  }
+
+  function renderRailSources() {
+    const box = $("#railSources");
+    box.innerHTML = "";
+    $("#railCount").textContent = `${state.sources.length}/${maxSources()}`;
+    if (!state.sources.length) {
+      box.innerHTML = `<p class="rail-empty">아직 추가된 영상이 없습니다.</p>`;
+      return;
+    }
+    state.sources.forEach((s, i) => {
+      const el = document.createElement("div");
+      el.className = "rail-src";
+      el.innerHTML = `<span class="swatch" style="background:${color(i)}"></span>
+        <span class="name">${String.fromCharCode(65 + i)} · ${esc(s.name)}</span>`;
+      el.addEventListener("click", () => setStep(1));
+      box.appendChild(el);
     });
   }
 
-  async function handleFile(file, nameEl, side) {
-    const prog = side === "a" ? $("#upProgA > i") : $("#upProgB > i");
-    nameEl.textContent = `${file.name} · 업로드 중…`;
-    prog.style.right = "70%";
+  function renderStartWith() {
+    const n = Math.max(state.sources.length, 2);
+    const items = [];
+    for (let i = 0; i < n; i++) items.push({ value: String.fromCharCode(65 + i), label: String.fromCharCode(65 + i) });
+    fillSelect($("#startWith"), items, $("#startWith").value || "A");
+  }
+
+  function removeSource(id) {
+    state.sources = state.sources.filter((s) => s.id !== id);
+    renderSources();
+  }
+
+  function formatBytes(n) {
+    if (!n) return "";
+    const mb = n / 1024 / 1024;
+    return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+  }
+
+  async function addFiles(files) {
+    for (const file of files) {
+      if (state.sources.length >= maxSources()) { toast(`최대 ${maxSources()}개까지 추가할 수 있습니다.`, "err"); break; }
+      await uploadOne(file);
+    }
+  }
+
+  async function uploadOne(file) {
+    const src = { id: Math.random().toString(36).slice(2), name: file.name, size: file.size, path: null, uploading: true };
+    state.sources.push(src);
+    renderSources();
     const fd = new FormData();
     fd.append("file", file);
     try {
       const res = await api("/api/upload", { method: "POST", body: fd });
-      if (side === "a") state.pathA = res.path; else state.pathB = res.path;
-      nameEl.textContent = file.name;
-      prog.style.right = "0%";
-      $("#analyzeBtn").disabled = !(state.pathA && state.pathB);
+      src.path = res.path; src.size = res.size; src.uploading = false;
+      renderSources();
     } catch (err) {
-      nameEl.textContent = "";
-      prog.style.right = "100%";
+      state.sources = state.sources.filter((s) => s.id !== src.id);
+      renderSources();
       toast("업로드 실패: " + err.message, "err");
     }
   }
 
-  /* ---------------- jobs ---------------- */
+  /* ── jobs ────────────────────────────────────────────────────────── */
   function watchJob(jobId, { onProgress, onDone, onError }) {
     const es = new EventSource(`/api/jobs/${jobId}/events`);
     state.jobStream = es;
@@ -154,8 +220,7 @@
       const job = JSON.parse(ev.data);
       if (onProgress) onProgress(job);
       if (job.finished) {
-        es.close();
-        state.jobStream = null;
+        es.close(); state.jobStream = null;
         if (job.status === "done") onDone && onDone(job);
         else if (job.status === "cancelled") onError && onError({ cancelled: true });
         else onError && onError({ message: job.error || "알 수 없는 오류" });
@@ -165,20 +230,32 @@
     return es;
   }
 
+  function setStatus(stateName, msg, progress) {
+    const el = $("#statusState");
+    el.classList.remove("is-busy", "is-ok", "is-err");
+    const dots = { idle: "대기", busy: "작업 중", ok: "완료", err: "오류" };
+    el.classList.add(stateName === "busy" ? "is-busy" : stateName === "ok" ? "is-ok" : stateName === "err" ? "is-err" : "");
+    el.innerHTML = `<i class="dot-idle"></i>${dots[stateName] || "대기"}`;
+    $("#statusMsg").textContent = msg || "";
+    if (progress == null) {
+      $("#statusProgress").hidden = true;
+    } else {
+      $("#statusProgress").hidden = false;
+      $("#statusBar").style.width = `${clamp(progress, 0, 1) * 100}%`;
+    }
+  }
+
   async function runAnalyze() {
-    const card = $("#runCard");
-    card.hidden = false;
-    $("#cancelBtn").hidden = false;
-    setBar("#runBar", 0);
-    $("#runMsg").textContent = "분석을 시작하는 중…";
+    if (!(state.sources.length >= 2)) return;
+    $("#runCard").hidden = false;
+    setStatus("busy", "분석 준비 중…", 0);
+    $("#runMsg").textContent = "분석을 준비하는 중…";
     let jobId;
     try {
       const res = await api("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          path_a: state.pathA,
-          path_b: state.pathB,
+          paths: state.sources.map((s) => s.path),
           quality: $("#quality").value,
           interval_seconds: Number($("#interval").value) || 5,
           use_ai: $("#useAi").checked,
@@ -186,63 +263,128 @@
       });
       jobId = res.job_id;
     } catch (err) {
-      card.hidden = true;
+      $("#runCard").hidden = true; setStatus("err", "분석 요청 실패");
       toast("분석 요청 실패: " + err.message, "err");
       return;
     }
     watchJob(jobId, {
-      onProgress: (job) => {
-        setBar("#runBar", job.progress);
-        $("#runMsg").textContent = job.message || "처리 중…";
-      },
+      onProgress: (job) => { setStatus("busy", job.message || "분석 중…", job.progress); $("#runMsg").textContent = job.message || "분석 중…"; },
       onDone: async (job) => {
-        card.hidden = true;
+        $("#runCard").hidden = true;
         applyStatus(job.result);
-        await loadWaveform();
-        await loadPlan();
-        toast("정렬 완료", "ok");
+        await loadWaveform(); await loadPlan();
+        setStatus("ok", "정렬 완료", null);
+        toast("분석이 끝났습니다", "ok");
         setStep(2);
       },
       onError: (err) => {
-        card.hidden = true;
-        if (!err.cancelled) toast("분석 실패: " + err.message, "err");
+        $("#runCard").hidden = true;
+        if (err.cancelled) { setStatus("idle", "분석 취소됨", null); }
+        else { setStatus("err", "분석 실패", null); toast("분석 실패: " + err.message, "err"); }
       },
     });
     $("#cancelBtn").onclick = () => jobId && api(`/api/jobs/${jobId}/cancel`, { method: "POST" });
   }
 
-  function setBar(sel, fraction) {
-    $(sel).style.right = `${100 - Math.max(0, Math.min(1, fraction)) * 100}%`;
-  }
-
-  /* ---------------- status / summary ---------------- */
+  /* ── status / summary ────────────────────────────────────────────── */
   function applyStatus(status) {
-    state.ready = true;
+    state.ready = !!status.ready;
+    state.sourceMeta = status.sources || state.sourceMeta;
+    if (state.sourceMeta.length && state.sources.length === 0) {
+      // reflect an already-analyzed workspace into the editable list
+      state.sources = state.sourceMeta.map((s, i) => ({
+        id: "s" + i, path: null, name: s.name, size: 0, uploading: false,
+      }));
+      renderSources();
+    }
+
+    if (!state.ready) { return; }
+
     const grid = $("#statGrid");
-    grid.innerHTML = "";
-    const a = status.a, b = status.b, al = status.alignment;
-    const stat = (k, v, sub = "") =>
-      grid.insertAdjacentHTML("beforeend",
-        `<div class="stat"><div class="k">${k}</div><div class="v">${v}${sub ? ` <small>${sub}</small>` : ""}</div></div>`);
-    if (a) stat("영상 A", a.name, `${a.duration}s`);
-    if (b) stat("영상 B", b.name, `${b.duration}s`);
-    if (a) stat("템포 A / B", `${a.tempo_bpm}`, `/ ${b.tempo_bpm} BPM`);
-    if (al) stat("평균 신뢰도", al.mean_confidence, `${(al.low_fraction * 100).toFixed(1)}% 저신뢰`);
-    if (status.plan) stat("전환 구간", `${status.plan.segments.length}`, "개");
+    const src = state.sourceMeta;
+    const al = status.alignment || {};
+    const plan = status.plan;
+    const rows = [];
+    rows.push(["소스", `${src.length}`, "개"]);
+    if (src[0]) rows.push(["기준 길이", `${src[0].duration}`, "초"]);
+    const tempos = src.map((s) => s.tempo_bpm).filter((v) => v);
+    if (tempos.length) rows.push(["템포", `${Math.min(...tempos)}–${Math.max(...tempos)}`, "BPM"]);
+    if (al.mean_confidence != null) rows.push(["평균 신뢰도", (al.mean_confidence * 100).toFixed(0), "%"]);
+    if (al.low_fraction != null) rows.push(["저신뢰 비율", (al.low_fraction * 100).toFixed(1), "%"]);
+    if (plan) rows.push(["전환 구간", `${plan.segments.length}`, "개"]);
+    grid.innerHTML = rows.map(([k, v, s]) =>
+      `<div class="stat"><span class="k">${k}</span><span class="v">${v}${s ? `<small>${s}</small>` : ""}</span></div>`).join("");
+
     $("#summaryCard").hidden = false;
-    $("#summaryBadge").textContent = "완료";
-    $("#aiNote").textContent = status.ai_note || "";
+    const note = status.ai_note;
+    $("#aiNote").hidden = !note;
+    $("#aiNote").textContent = note || "";
     $("#renderBtn").disabled = false;
+
+    // status readouts
+    $("#statusDur").textContent = src[0] ? fmt(src[0].duration, 1) : "—";
+    $("#statusSegs").textContent = plan ? `${plan.segments.length}구간` : "—";
+    $("#statusConf").textContent = al.mean_confidence != null ? `${(al.mean_confidence * 100).toFixed(0)}%` : "—";
+
     if (status.render) showResult(status.render);
+    markSteps();
   }
 
-  /* ---------------- waveform ---------------- */
+  function stepDone(n) {
+    switch (n) {
+      case 1: return state.ready;
+      case 2: return state.ready && !!(state.plan && state.plan.segments && state.plan.segments.length);
+      case 3: return state.previewSeen && state.ready;
+      case 4: return !!state.result;
+      default: return false;
+    }
+  }
+
+  function markSteps() {
+    $$(".step").forEach((el) => {
+      el.classList.toggle("is-done", stepDone(Number(el.dataset.step)));
+    });
+  }
+
+  /* ── waveform ────────────────────────────────────────────────────── */
+  const PAD_T = 14, PAD_B = 26, PAD_L = 46, PAD_R = 16;
+  const BAND_H = 20, GAP = 10, SRC_H = 46, ALIGN_H = 92;
+
+  function monoFont() { return getComputedStyle(document.body).getPropertyValue("--mono"); }
+
+  function sourceCount() {
+    if (state.wave && state.wave.envs && state.wave.envs.length) return state.wave.envs.length;
+    return Math.max(1, state.sourceMeta.length || 2);
+  }
+
+  function waveGeom() {
+    const canvas = $("#wave");
+    const W = canvas.clientWidth || 720;
+    const innerW = Math.max(60, W - PAD_L - PAD_R);
+    const n = Math.max(1, sourceCount());
+    const H = PAD_T + BAND_H + GAP + n * SRC_H + GAP + ALIGN_H + PAD_B;
+    const bandTop = PAD_T, bandBot = bandTop + BAND_H;
+    const lanes = [];
+    let top = bandBot + GAP;
+    for (let k = 0; k < n; k++) { lanes.push({ top, bot: top + SRC_H }); top += SRC_H; }
+    const alignTop = top + GAP, alignBot = alignTop + ALIGN_H;
+    const aMax = (state.wave && state.wave.a_duration) || 1;
+    return {
+      W, H, innerW, padL: PAD_L, bandTop, bandBot, lanes, alignTop, alignBot, aMax,
+      xA: (t) => PAD_L + (t / aMax) * innerW,
+      tA: (x) => ((x - PAD_L) / innerW) * aMax,
+    };
+  }
+
   function resizeWave() {
     const canvas = $("#wave");
+    if (!canvas) return;
+    const g = waveGeom();
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.max(300, rect.width) * dpr;
-    canvas.height = 320 * dpr;
+    canvas.style.height = g.H + "px";
+    canvas.width = Math.max(320, rect.width) * dpr;
+    canvas.height = g.H * dpr;
     canvas.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
     drawWave();
   }
@@ -250,65 +392,42 @@
   async function loadWaveform() {
     try {
       state.wave = await api("/api/waveform");
-      if (state.wave && state.wave.ready) {
-        state.anchors = state.wave.anchors.map((p) => [...p]);
-        $("#waveEmpty").hidden = true;
-      }
+      if (state.wave && state.wave.ready) { $("#waveEmpty").hidden = true; resizeWave(); }
     } catch (_) { state.wave = null; }
+    renderLegend();
+    renderAnchors();
     drawWave();
   }
 
-  function waveGeom() {
-    const canvas = $("#wave");
-    const W = canvas.clientWidth, H = 320;
-    const padX = 18, padTop = 16, padBottom = 26;
-    const innerW = W - padX * 2;
-    const innerH = H - padTop - padBottom;
-    const confH = 10, gap = 10;
-    const laneH = (innerH - confH - gap * 2) / 2;
-    const aTop = padTop, aBot = padTop + laneH;
-    const confTop = aBot + gap, confBot = confTop + confH;
-    const bTop = confBot + gap, bBot = bTop + laneH;
-    const aMax = (state.wave && state.wave.a_duration) || 1;
-    const bMax = (state.wave && state.wave.b_duration) || 1;
-    return {
-      W, H, padX, innerW, aTop, aBot, confTop, confBot, bTop, bBot, aMax, bMax,
-      xA: (t) => padX + (t / aMax) * innerW,
-      xB: (t) => padX + (t / bMax) * innerW,
-      tA: (x) => ((x - padX) / innerW) * aMax,
-    };
+  function renderLegend() {
+    const leg = $("#legend");
+    if (!(state.wave && state.wave.ready)) { leg.innerHTML = ""; return; }
+    const parts = (state.wave.envs || []).map((e) =>
+      `<span class="leg"><i class="swatch sq" style="background:${color(e.index)}"></i>${e.label} 파형 레인</span>`);
+    parts.push(`<span class="leg"><i class="swatch sq" style="background:var(--bad)"></i>저신뢰 구간</span>`);
+    parts.push(`<span class="leg"><i class="swatch sq" style="background:var(--warn)"></i>수동 앵커</span>`);
+    parts.push(`<span class="leg"><i class="swatch" style="background:var(--fg-3)"></i>매핑 곡선 · 신뢰도</span>`);
+    leg.innerHTML = parts.join("");
   }
 
-  function laneFill(ctx, xs, vs, geom, xFn, top, bot, color, alpha) {
-    if (!xs.length) return;
-    const grad = ctx.createLinearGradient(0, top, 0, bot);
-    grad.addColorStop(0, hexA(color, alpha));
-    grad.addColorStop(1, hexA(color, 0.04));
-    ctx.beginPath();
-    ctx.moveTo(geom.padX, bot);
-    for (let i = 0; i < xs.length; i++) {
-      const x = xFn(xs[i]);
-      const y = bot - Math.min(1, vs[i]) * (bot - top) * 0.94;
-      ctx.lineTo(x, y);
+  function renderAnchors() {
+    const list = $("#anchorList");
+    if (!list) return;
+    const anchors = (state.wave && state.wave.anchors) || [];
+    $("#anchorCount").textContent = anchors.length;
+    list.innerHTML = "";
+    if (!anchors.length) {
+      list.innerHTML = `<span class="anchor-empty">파형을 Shift-클릭하거나 ‘앵커 추가’를 누르면 그 위치의 정렬을 고정합니다.</span>`;
+      return;
     }
-    ctx.lineTo(geom.padX + geom.innerW, bot);
-    ctx.closePath();
-    ctx.fillStyle = grad;
-    ctx.fill();
-    ctx.beginPath();
-    for (let i = 0; i < xs.length; i++) {
-      const x = xFn(xs[i]);
-      const y = bot - Math.min(1, vs[i]) * (bot - top) * 0.94;
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    }
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.4;
-    ctx.stroke();
-  }
-
-  function hexA(hex, alpha) {
-    const n = parseInt(hex.slice(1), 16);
-    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+    anchors.forEach(([a, b], i) => {
+      const chip = document.createElement("span");
+      chip.className = "anchor-chip";
+      chip.innerHTML = `<span class="mono">${fmt(a)}</span> <span style="color:var(--fg-3)">→</span> <span class="mono">${fmt(b)}</span>
+        <button type="button" title="이 앵커 제거">${icon("x")}</button>`;
+      chip.querySelector("button").addEventListener("click", () => removeAnchor(i));
+      list.appendChild(chip);
+    });
   }
 
   function drawWave() {
@@ -317,125 +436,174 @@
     const ctx = canvas.getContext("2d");
     const g = waveGeom();
     ctx.clearRect(0, 0, g.W, g.H);
-    drawGrid(ctx, g);
-    if (!state.wave || !state.wave.ready) return;
+    drawAxes(ctx, g);
     const w = state.wave;
+    if (!w || !w.ready) { drawPlayhead(ctx, g); return; }
 
-    // segment tints + transition lines
-    w.segments.forEach((s) => {
-      const x0 = g.xA(s.a_start), x1 = g.xA(s.a_end);
-      const col = s.source === "A" ? COLORS.a : COLORS.b;
-      ctx.fillStyle = hexA(col, 0.06);
-      ctx.fillRect(x0, g.aTop, x1 - x0, g.bBot - g.aTop);
-      ctx.fillStyle = col;
-      ctx.fillRect(x0, g.aTop, 2, g.bBot - g.aTop);
-      ctx.font = "600 11px Inter, sans-serif";
-      ctx.fillStyle = hexA(col, 0.85);
-      ctx.fillText(s.source, x0 + 7, g.aTop + 13);
+    // low-confidence shading over the reference (A) lane
+    const refLane = g.lanes[0];
+    if (refLane) {
+      (w.low_segments || []).forEach(([t0, t1]) => {
+        ctx.fillStyle = "rgba(242,114,123,.12)";
+        ctx.fillRect(g.xA(t0), refLane.top, Math.max(1, g.xA(t1) - g.xA(t0)), refLane.bot - refLane.top);
+      });
+    }
+
+    // one waveform lane per performance
+    (w.envs || []).forEach((env, k) => {
+      const lane = g.lanes[k];
+      if (!lane) return;
+      if (k > 0) {
+        ctx.strokeStyle = "rgba(231,233,236,.07)";
+        ctx.beginPath(); ctx.moveTo(g.padL, lane.top + .5); ctx.lineTo(g.padL + g.innerW, lane.top + .5); ctx.stroke();
+      }
+      fillLane(ctx, env, g, lane.top, lane.bot, color(env.index), 0.9);
+      ctx.fillStyle = hexA(color(env.index), 0.95);
+      ctx.font = "600 11px " + monoFont();
+      ctx.fillText(env.label, g.padL + 4, lane.top + 13);
     });
 
-    // low-confidence shading
-    w.low_segments.forEach(([t0, t1]) => {
-      const x0 = g.xA(t0), x1 = g.xA(t1);
-      ctx.fillStyle = hexA(COLORS.low, 0.16);
-      ctx.fillRect(x0, g.aTop, Math.max(1.5, x1 - x0), g.confBot - g.aTop);
-    });
-
-    // onsets (ticks on A lane top)
-    ctx.strokeStyle = hexA("#ffffff", 0.28);
+    // onset ticks along the top of the alignment lane
+    ctx.strokeStyle = "rgba(231,233,236,.2)";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    w.onsets.forEach((t) => { const x = g.xA(t); ctx.moveTo(x, g.aTop); ctx.lineTo(x, g.aTop + 7); });
+    (w.onsets || []).forEach((t) => { const x = g.xA(t); ctx.moveTo(x, g.alignTop); ctx.lineTo(x, g.alignTop + 5); });
     ctx.stroke();
 
-    // envelopes
-    laneFill(ctx, w.env_a.t, w.env_a.v, g, g.xA, g.aTop, g.aBot, COLORS.a, 0.55);
-    laneFill(ctx, w.env_b.t, w.env_b.v, g, g.xB, g.bTop, g.bBot, COLORS.b, 0.5);
+    // mapping curves (secondary, faint)
+    (w.maps || []).forEach((m) => {
+      const bMax = Math.max(...m.b, 0.001);
+      ctx.beginPath();
+      for (let i = 0; i < m.a.length; i++) {
+        const x = g.xA(m.a[i]);
+        const y = g.alignBot - (m.b[i] / bMax) * (g.alignBot - g.alignTop);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.strokeStyle = hexA(color(m.index), 0.45);
+      ctx.lineWidth = 1; ctx.stroke();
+    });
 
-    // confidence curve
-    const grad = ctx.createLinearGradient(g.padX, 0, g.padX + g.innerW, 0);
-    grad.addColorStop(0, COLORS.a); grad.addColorStop(1, COLORS.b);
-    ctx.beginPath();
-    for (let i = 0; i < w.confidence.t.length; i++) {
-      const x = g.xA(w.confidence.t[i]);
-      const y = g.confBot - w.confidence.v[i] * (g.confBot - g.confTop);
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    // confidence fill
+    if (w.confidence && w.confidence.t.length) {
+      const span = g.alignBot - g.alignTop;
+      ctx.beginPath();
+      ctx.moveTo(g.xA(w.confidence.t[0]), g.alignBot);
+      for (let i = 0; i < w.confidence.t.length; i++) ctx.lineTo(g.xA(w.confidence.t[i]), g.alignBot - w.confidence.v[i] * span);
+      ctx.lineTo(g.xA(w.confidence.t[w.confidence.t.length - 1]), g.alignBot);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(231,233,236,.06)"; ctx.fill();
+      ctx.beginPath();
+      for (let i = 0; i < w.confidence.t.length; i++) {
+        const x = g.xA(w.confidence.t[i]), y = g.alignBot - w.confidence.v[i] * span;
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.strokeStyle = "rgba(231,233,236,.35)"; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = "rgba(231,233,236,.4)";
+      ctx.font = "10px " + monoFont();
+      ctx.fillText("신뢰도", g.padL + 4, g.alignTop + 11);
     }
-    ctx.strokeStyle = grad; ctx.lineWidth = 1.6; ctx.stroke();
-    ctx.fillStyle = hexA("#ffffff", 0.35);
-    ctx.font = "10px 'JetBrains Mono', monospace";
-    ctx.fillText("신뢰도", g.padX + 2, g.confTop - 2);
 
-    // mapping curve A -> B
-    ctx.beginPath();
-    const mc = w.map;
-    for (let i = 0; i < mc.a.length; i++) {
-      const xA = g.xA(mc.a[i]);
-      const xB = g.xB(mc.b[i]);
-      const midY = (g.aTop + g.bBot) / 2;
-      const y = midY + (xB - xA) * 0.12;
-      i ? ctx.lineTo(xA, y) : ctx.moveTo(xA, y);
-    }
-    const mg = ctx.createLinearGradient(0, 0, g.W, 0);
-    mg.addColorStop(0, hexA(COLORS.a, 0.5)); mg.addColorStop(1, hexA(COLORS.b, 0.5));
-    ctx.strokeStyle = mg; ctx.lineWidth = 1.2; ctx.stroke();
+    // segment band
+    (w.segments || []).forEach((s) => {
+      const x0 = g.xA(s.a_start), x1 = g.xA(s.a_end);
+      ctx.fillStyle = color(s.source_index);
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(x0, g.bandTop, Math.max(1, x1 - x0 - 1), g.bandBot - g.bandTop);
+      ctx.globalAlpha = 1;
+      if (x1 - x0 > 18) {
+        ctx.fillStyle = "#0a0b0d";
+        ctx.font = "600 10px " + monoFont();
+        ctx.fillText(s.source, x0 + 5, g.bandTop + 14);
+      }
+    });
+    ctx.strokeStyle = "rgba(231,233,236,.12)";
+    ctx.strokeRect(g.padL + .5, g.bandTop + .5, g.innerW - 1, (g.bandBot - g.bandTop) - 1);
 
     // anchors
-    w.anchors.forEach(([a, b]) => {
-      const x = g.xA(a), y = (g.aTop + g.bBot) / 2;
-      ctx.fillStyle = COLORS.warn;
+    (w.anchors || []).forEach(([a]) => {
+      const x = g.xA(a), y = (g.bandTop + g.bandBot) / 2;
+      ctx.fillStyle = "#e3b341";
       ctx.beginPath();
       ctx.moveTo(x, y - 6); ctx.lineTo(x + 6, y); ctx.lineTo(x, y + 6); ctx.lineTo(x - 6, y);
       ctx.closePath(); ctx.fill();
     });
 
-    // playhead
-    if (state.ready) {
-      const x = g.xA(state.scrubTime);
-      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.2;
-      ctx.beginPath(); ctx.moveTo(x, g.aTop); ctx.lineTo(x, g.bBot); ctx.stroke();
-      ctx.fillStyle = "#fff";
-      ctx.beginPath(); ctx.moveTo(x, g.aTop); ctx.lineTo(x + 5, g.aTop + 6); ctx.lineTo(x - 5, g.aTop + 6); ctx.closePath(); ctx.fill();
-    }
+    drawPlayhead(ctx, g);
   }
 
-  function drawGrid(ctx, g) {
-    ctx.strokeStyle = hexA("#ffffff", 0.05);
-    ctx.fillStyle = hexA("#ffffff", 0.35);
-    ctx.font = "10px 'JetBrains Mono', monospace";
+  function fillLane(ctx, env, g, top, bot, col, alpha) {
+    const { t, v } = env;
+    if (!t || !t.length) return;
+    ctx.beginPath();
+    ctx.moveTo(g.xA(t[0]), bot);
+    for (let i = 0; i < t.length; i++) ctx.lineTo(g.xA(t[i]), bot - clamp(v[i], 0, 1) * (bot - top));
+    ctx.lineTo(g.xA(t[t.length - 1]), bot);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, top, 0, bot);
+    grad.addColorStop(0, hexA(col, alpha * 0.5));
+    grad.addColorStop(1, hexA(col, 0.03));
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.beginPath();
+    for (let i = 0; i < t.length; i++) {
+      const x = g.xA(t[i]), y = bot - clamp(v[i], 0, 1) * (bot - top);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.strokeStyle = hexA(col, alpha); ctx.lineWidth = 1.2; ctx.stroke();
+  }
+
+  function drawAxes(ctx, g) {
+    ctx.font = "10px " + monoFont();
+    ctx.strokeStyle = "rgba(231,233,236,.055)";
+    ctx.fillStyle = "rgba(231,233,236,.34)";
     ctx.lineWidth = 1;
     const step = niceStep(g.aMax);
-    for (let t = 0; t <= g.aMax; t += step) {
+    const bottom = g.alignBot;
+    for (let t = 0; t <= g.aMax + 1e-6; t += step) {
       const x = g.xA(t);
-      ctx.beginPath(); ctx.moveTo(x, g.aTop); ctx.lineTo(x, g.bBot); ctx.stroke();
-      ctx.fillText(`${t.toFixed(0)}s`, x + 3, g.H - 8);
+      ctx.beginPath(); ctx.moveTo(x, g.bandTop); ctx.lineTo(x, bottom); ctx.stroke();
+      ctx.fillText(`${t.toFixed(0)}s`, x + 4, g.H - 9);
     }
-    [g.aBot, g.confBot, g.bBot].forEach((y) => {
-      ctx.beginPath(); ctx.moveTo(g.padX, y); ctx.lineTo(g.padX + g.innerW, y); ctx.stroke();
+    ctx.strokeStyle = "rgba(231,233,236,.1)";
+    [g.bandTop, g.bandBot, g.alignTop, g.alignBot, ...g.lanes.map((l) => l.bot)].forEach((y) => {
+      ctx.beginPath(); ctx.moveTo(g.padL, y + .5); ctx.lineTo(g.padL + g.innerW, y + .5); ctx.stroke();
     });
+  }
+
+  function drawPlayhead(ctx, g) {
+    if (!state.ready) return;
+    const x = g.xA(state.scrub);
+    ctx.strokeStyle = "rgba(231,233,236,.85)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(x, g.bandTop); ctx.lineTo(x, g.alignBot); ctx.stroke();
+    ctx.fillStyle = "#e7e9ec";
+    ctx.beginPath(); ctx.moveTo(x, g.bandTop); ctx.lineTo(x + 5, g.bandTop - 7); ctx.lineTo(x - 5, g.bandTop - 7); ctx.closePath(); ctx.fill();
   }
 
   function niceStep(max) {
     const target = max / 8;
-    const pow = Math.pow(10, Math.floor(Math.log10(target)));
+    const pow = Math.pow(10, Math.floor(Math.log10(Math.max(target, 0.001))));
     const n = target / pow;
     const mult = n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10;
-    return Math.max(1, mult * pow);
+    return Math.max(0.5, mult * pow);
+  }
+
+  function hexA(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
   }
 
   function waveTimeFromEvent(ev) {
-    const canvas = $("#wave");
-    const rect = canvas.getBoundingClientRect();
-    const g = waveGeom();
-    return Math.max(0, Math.min(g.aMax, g.tA(ev.clientX - rect.left)));
+    const rect = $("#wave").getBoundingClientRect();
+    return clamp(waveGeom().tA(ev.clientX - rect.left), 0, waveGeom().aMax);
   }
 
-  function nearestAnchor(x) {
+  function nearestAnchor(clientX) {
     if (!state.wave) return -1;
-    const g = waveGeom();
+    const rect = $("#wave").getBoundingClientRect();
     let best = -1, bestD = 12;
-    state.wave.anchors.forEach(([a], i) => {
-      const d = Math.abs(g.xA(a) - x);
+    (state.wave.anchors || []).forEach(([a], i) => {
+      const d = Math.abs(waveGeom().xA(a) - (clientX - rect.left));
       if (d < bestD) { bestD = d; best = i; }
     });
     return best;
@@ -445,67 +613,42 @@
     const canvas = $("#wave");
     canvas.addEventListener("mousemove", (ev) => {
       if (!(state.wave && state.wave.ready)) return;
-      const t = waveTimeFromEvent(ev);
-      $("#timeReadout").textContent = fmt(t);
-      if (ev.buttons === 0) { state.scrubTime = t; drawWave(); }
+      $("#timeReadout").textContent = fmt(waveTimeFromEvent(ev));
     });
     canvas.addEventListener("click", async (ev) => {
       if (!(state.wave && state.wave.ready)) return;
       const t = waveTimeFromEvent(ev);
-      if (ev.ctrlKey || ev.metaKey) {
-        await addAnchor(t);
-      } else {
-        state.scrubTime = t;
-        syncScrub();
-        drawWave();
-        schedulePreview();
-      }
+      if (ev.shiftKey) await addAnchor(t);
+      else seekTo(t);
     });
     canvas.addEventListener("contextmenu", async (ev) => {
       ev.preventDefault();
       if (!(state.wave && state.wave.ready)) return;
-      const rect = canvas.getBoundingClientRect();
-      const idx = nearestAnchor(ev.clientX - rect.left);
+      const idx = nearestAnchor(ev.clientX);
       if (idx >= 0) await removeAnchor(idx);
     });
+
+    const addBtn = $("#addAnchorBtn");
+    if (addBtn) addBtn.addEventListener("click", () => {
+      if (state.wave && state.wave.ready) addAnchor(state.scrub);
+    });
+    const clearBtn = $("#clearAnchorsBtn");
+    if (clearBtn) clearBtn.addEventListener("click", clearAnchors);
   }
 
-  async function addAnchor(aTime) {
+  async function clearAnchors() {
+    if (!(state.wave && state.wave.ready)) return;
     try {
       const res = await api("/api/anchors", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "add", a: aTime }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ anchors: [] }),
       });
       await refreshPlan(res);
-      toast(`앵커 추가 @ ${fmt(aTime)}`, "ok");
-    } catch (err) { toast("앵커 추가 실패: " + err.message, "err"); }
-  }
-
-  async function removeAnchor(index) {
-    try {
-      const res = await api("/api/anchors", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "remove", index }),
-      });
-      await refreshPlan(res);
-      toast("앵커 제거", "ok");
+      toast("앵커를 모두 지웠습니다", "ok");
     } catch (err) { toast("앵커 제거 실패: " + err.message, "err"); }
   }
 
-  /* ---------------- plan ---------------- */
-  async function loadPlan() {
-    try {
-      const res = await api("/api/transitions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(collectTransitionSettings()),
-      });
-      await refreshPlan(res);
-    } catch (err) { toast("전환 생성 실패: " + err.message, "err"); }
-  }
-
+  /* ── plan ────────────────────────────────────────────────────────── */
   function collectTransitionSettings() {
     return {
       mode: $("#mode").value,
@@ -517,50 +660,95 @@
     };
   }
 
+  async function loadPlan() {
+    try {
+      const res = await api("/api/transitions", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(collectTransitionSettings()),
+      });
+      await refreshPlan(res);
+    } catch (err) { toast("전환 생성 실패: " + err.message, "err"); }
+  }
+
   async function refreshPlan(res) {
     if (res && res.plan) renderPlan(res.plan);
     await loadWaveform();
-    if (state.wave && state.wave.plan === undefined) { /* noop */ }
   }
 
   function renderPlan(plan) {
+    state.plan = plan;
+    $("#segCount").textContent = plan.segments.length;
+
     const list = $("#segList");
     list.innerHTML = "";
-    $("#segCount").textContent = plan.segments.length;
-    plan.segments.forEach((s) => {
+    plan.segments.forEach((s, i) => {
       const conf = Math.round(s.confidence * 100);
-      const color = s.confidence < 0.4 ? COLORS.low : s.confidence < 0.65 ? COLORS.warn : "#34d399";
+      const c = s.confidence < 0.4 ? "var(--bad)" : s.confidence < 0.65 ? "var(--warn)" : "var(--ok)";
       const el = document.createElement("div");
       el.className = "seg";
       el.innerHTML = `
-        <div class="idx ${s.source.toLowerCase()}">${s.source}</div>
-        <div><div class="meta"><b>${fmt(s.a_start)} – ${fmt(s.a_end)}</b> · B ${fmt(s.b_start)}</div>
-        <div class="meta">${s.reason}</div></div>
-        <div class="bar" title="신뢰도 ${conf}%"><i style="width:${conf}%;background:${color}"></i></div>`;
+        <span class="idx" style="background:${color(s.source_index)}">${s.source}</span>
+        <div><div class="meta"><b>${fmt(s.a_start)} – ${fmt(s.a_end)}</b> · in ${fmt(s.src_start ?? s.b_start)}</div>
+        <div class="reason">${esc(s.reason)}</div></div>
+        <div class="confbar" title="신뢰도 ${conf}%"><i style="width:${conf}%;background:${c}"></i></div>`;
       el.addEventListener("click", () => seekTo(s.a_start));
       list.appendChild(el);
     });
+
     const warns = $("#warnList");
     warns.innerHTML = "";
     (plan.warnings || []).slice(0, 6).forEach((wd) => {
-      warns.insertAdjacentHTML("beforeend", `<div class="warn">${wd}</div>`);
+      warns.insertAdjacentHTML("beforeend", `<div class="warn">${icon("alert")}<span>${esc(wd)}</span></div>`);
     });
+
     const jump = $("#segJump");
     jump.innerHTML = "";
     plan.segments.forEach((s, i) => {
-      const opt = document.createElement("option");
-      opt.value = i;
-      opt.textContent = `#${i + 1} · ${s.source} · ${fmt(s.a_start)}`;
-      jump.appendChild(opt);
+      const o = document.createElement("option");
+      o.value = i; o.textContent = `#${i + 1} · ${s.source} · ${fmt(s.a_start)}`;
+      jump.appendChild(o);
     });
+
+    // refresh reference readout
+    $("#statusSegs").textContent = `${plan.segments.length}구간`;
     drawWave();
+    markSteps();
   }
 
-  /* ---------------- preview ---------------- */
+  async function addAnchor(aTime) {
+    try {
+      const res = await api("/api/anchors", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add", a: aTime }),
+      });
+      await refreshPlan(res);
+      toast(`앵커 추가 @ ${fmt(aTime)}`, "ok");
+    } catch (err) { toast("앵커 추가 실패: " + err.message, "err"); }
+  }
+
+  async function removeAnchor(index) {
+    try {
+      const res = await api("/api/anchors", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove", index }),
+      });
+      await refreshPlan(res);
+      toast("앵커 제거", "ok");
+    } catch (err) { toast("앵커 제거 실패: " + err.message, "err"); }
+  }
+
+  /* ── preview ─────────────────────────────────────────────────────── */
+  function sourceTime(k, refTime) {
+    if (!state.wave) return refTime;
+    if (k === 0) return refTime;
+    const map = (state.wave.maps || []).find((m) => m.index === k);
+    return map ? interp(map.a, map.b, refTime) : refTime;
+  }
+
   function syncScrub() {
     const max = state.wave ? state.wave.a_duration : 1;
-    $("#scrub").value = Math.round((state.scrubTime / max) * 1000);
-    $("#scrubTime").textContent = fmt(state.scrubTime);
+    $("#scrub").value = Math.round((state.scrub / max) * 1000);
+    $("#scrubTime").textContent = fmt(state.scrub);
   }
 
   function schedulePreview() {
@@ -569,38 +757,66 @@
   }
 
   function seekTo(t) {
-    state.scrubTime = Math.max(0, t);
-    syncScrub();
-    drawWave();
-    schedulePreview();
-    const sel = $("#segJump");
+    state.scrub = clamp(t, 0, state.wave ? state.wave.a_duration : t);
+    syncScrub(); drawWave(); schedulePreview();
     if (state.wave) {
-      const idx = state.wave.segments.findIndex((s) => t >= s.a_start && t < s.a_end);
-      if (idx >= 0) sel.value = String(idx);
+      const idx = (state.wave.segments || []).findIndex((s) => state.scrub >= s.a_start && state.scrub < s.a_end);
+      if (idx >= 0) $("#segJump").value = String(idx);
+      $$("#segList .seg").forEach((el, i) => el.classList.toggle("is-current", i === idx));
     }
   }
 
-  async function refreshPreview() {
-    if (!(state.wave && state.wave.ready)) return;
-    const aTime = state.scrubTime;
-    const bTime = interp(state.wave.map.a, state.wave.map.b, aTime);
-    $("#prevTimeA").textContent = fmt(aTime);
-    $("#prevTimeB").textContent = fmt(bTime);
-    const stamp = Date.now();
-    $("#prevA").src = `/api/frame?side=a&t=${aTime.toFixed(3)}&w=520&_=${stamp}`;
-    $("#prevB").src = `/api/frame?side=b&t=${bTime.toFixed(3)}&w=520&_=${stamp}`;
+  function renderPreviewGrid() {
+    const grid = $("#previewGrid");
+    grid.innerHTML = "";
+    const n = state.sourceMeta.length || 2;
+    for (let k = 0; k < n; k++) {
+      const meta = state.sourceMeta[k] || { label: String.fromCharCode(65 + k), name: "" };
+      const cell = document.createElement("div");
+      cell.className = "preview-cell";
+      cell.innerHTML = `
+        <div class="preview-head">
+          <span class="lab"><i class="dot" style="background:${color(k)}"></i>${meta.label}</span>
+          <span class="t" id="pt${k}">0.00s</span>
+        </div>
+        <div class="frame"><img id="pf${k}" alt="${meta.label} 프레임" /></div>`;
+      grid.appendChild(cell);
+    }
+    refreshPreview();
   }
 
-  /* ---------------- render ---------------- */
+  function refreshPreview() {
+    if (!(state.wave && state.wave.ready)) return;
+    const n = state.sourceMeta.length || 2;
+    const stamp = Date.now();
+    for (let k = 0; k < n; k++) {
+      const t = sourceTime(k, state.scrub);
+      const tEl = $(`#pt${k}`); const img = $(`#pf${k}`);
+      if (!tEl || !img) continue;
+      tEl.textContent = fmt(clamp(t, 0, 1e9));
+      img.src = `/api/frame?index=${k}&t=${t.toFixed(3)}&w=460&_=${stamp}`;
+    }
+  }
+
+  function stepSegment(dir) {
+    const segs = state.wave?.segments || [];
+    if (!segs.length) return;
+    let idx = segs.findIndex((s) => state.scrub < s.a_start);
+    idx = idx < 0 ? segs.length - 1 : Math.max(0, idx - 1);
+    const target = segs[clamp(idx + dir, 0, segs.length - 1)];
+    if (target) seekTo(target.a_start);
+  }
+
+  /* ── render ──────────────────────────────────────────────────────── */
   async function runRender() {
     const [w, h] = ($("#resolution").value || "1920x1080").split("x").map(Number);
     $("#renderProg").hidden = false;
-    setBar("#renderBar", 0);
+    $("#renderMsg").textContent = "렌더링을 준비하는 중…";
+    setStatus("busy", "렌더링 중…", 0);
     let jobId;
     try {
       const res = await api("/api/render", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           filename: $("#filename").value,
           width: w, height: h,
@@ -613,93 +829,103 @@
       });
       jobId = res.job_id;
     } catch (err) {
-      $("#renderProg").hidden = true;
+      $("#renderProg").hidden = true; setStatus("err", "렌더 요청 실패");
       toast("렌더 요청 실패: " + err.message, "err");
       return;
     }
     watchJob(jobId, {
-      onProgress: (job) => setBar("#renderBar", job.progress),
+      onProgress: (job) => { setStatus("busy", job.message || "렌더링 중…", job.progress); $("#renderMsg").textContent = job.message || "렌더링 중…"; },
       onDone: (job) => {
         $("#renderProg").hidden = true;
         showResult(job.result);
-        toast("영상 생성 완료", "ok");
+        setStatus("ok", "영상 생성 완료", null);
+        toast("영상 생성이 완료되었습니다", "ok");
       },
       onError: (err) => {
         $("#renderProg").hidden = true;
-        if (!err.cancelled) toast("렌더 실패: " + err.message, "err");
+        if (err.cancelled) setStatus("idle", "렌더 취소됨", null);
+        else { setStatus("err", "렌더 실패", null); toast("렌더 실패: " + err.message, "err"); }
       },
     });
   }
 
   function showResult(r) {
     if (!r) return;
+    state.result = r;
     $("#resultEmpty").hidden = true;
     $("#resultBox").hidden = false;
     $("#renderStats").innerHTML = `
-      <div class="stat"><div class="k">파일</div><div class="v" style="font-size:13px">${r.name}</div></div>
-      <div class="stat"><div class="k">길이</div><div class="v">${r.duration}<small>s</small></div></div>
-      <div class="stat"><div class="k">해상도</div><div class="v">${r.width}×${r.height}</div></div>
-      <div class="stat"><div class="k">구간</div><div class="v">${r.segments}<small>개</small></div></div>`;
+      <div class="stat"><span class="k">파일</span><span class="v" style="font-size:12px">${esc(r.name)}</span></div>
+      <div class="stat"><span class="k">길이</span><span class="v">${r.duration}<small>초</small></span></div>
+      <div class="stat"><span class="k">해상도</span><span class="v">${r.width}×${r.height}</span></div>
+      <div class="stat"><span class="k">구간</span><span class="v">${r.segments}<small>개</small></span></div>`;
     $("#resultVideo").src = `/api/download?_=${Date.now()}`;
+    markSteps();
   }
 
-  /* ---------------- steps ---------------- */
+  /* ── steps ───────────────────────────────────────────────────────── */
   function setStep(n) {
+    state.step = Number(n);
     $$(".step").forEach((el) => el.classList.toggle("is-active", el.dataset.step === String(n)));
     $$(".panel").forEach((el) => el.classList.toggle("is-active", el.dataset.panel === String(n)));
-    if (n === "3" || n === 3) schedulePreview();
-    if (n === "2" || n === 2) resizeWave();
+    if (Number(n) === 2) { resizeWave(); drawWave(); }
+    if (Number(n) === 3) { if (state.ready) state.previewSeen = true; renderPreviewGrid(); syncScrub(); }
+    if (Number(n) === 4) { /* no-op */ }
+    markSteps();
   }
 
-  /* ---------------- events ---------------- */
+  /* ── events ──────────────────────────────────────────────────────── */
   function wireEvents() {
-    wireDrop("#dropA", "#fileA", "#fileAName", "a");
-    wireDrop("#dropB", "#fileB", "#fileBName", "b");
-    wireWave();
     $$(".step").forEach((el) => el.addEventListener("click", () => setStep(el.dataset.step)));
     $("#analyzeBtn").addEventListener("click", runAnalyze);
+    $("#addSourceBtn").addEventListener("click", () => $("#hiddenFile").click());
+    $("#hiddenFile").addEventListener("change", (e) => { if (e.target.files.length) addFiles(Array.from(e.target.files)); e.target.value = ""; });
+
+    ["dragover", "dragenter"].forEach((ev) => $("#addSourceBtn").addEventListener(ev, (e) => { e.preventDefault(); $("#addSourceBtn").classList.add("drag"); }));
+    ["dragleave", "drop"].forEach((ev) => $("#addSourceBtn").addEventListener(ev, () => $("#addSourceBtn").classList.remove("drag")));
+    $("#addSourceBtn").addEventListener("drop", (e) => { e.preventDefault(); if (e.dataTransfer.files.length) addFiles(Array.from(e.dataTransfer.files)); });
+    document.addEventListener("dragover", (e) => e.preventDefault());
+    document.addEventListener("drop", (e) => e.preventDefault());
+
+    wireWave();
+
     $("#applyBtn").addEventListener("click", async () => {
       try {
         const res = await api("/api/transitions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify(collectTransitionSettings()),
         });
         await refreshPlan(res);
         toast("전환 지점을 갱신했습니다", "ok");
+        if (!state.planApplied && state.step === 2) {
+          state.planApplied = true;
+          setStep(3);
+        }
       } catch (err) { toast("갱신 실패: " + err.message, "err"); }
     });
+
     $("#renderBtn").addEventListener("click", runRender);
     $("#crf").addEventListener("input", (e) => { $("#crfVal").textContent = e.target.value; });
     $("#effect4").addEventListener("change", (e) => { $("#effect").value = e.target.value; });
     $("#audioMode4").addEventListener("change", (e) => { $("#audioMode").value = e.target.value; });
+
     $("#scrub").addEventListener("input", (e) => {
       const max = state.wave ? state.wave.a_duration : 1;
-      state.scrubTime = (e.target.value / 1000) * max;
-      $("#scrubTime").textContent = fmt(state.scrubTime);
-      drawWave();
-      schedulePreview();
+      state.scrub = (e.target.value / 1000) * max;
+      $("#scrubTime").textContent = fmt(state.scrub);
+      drawWave(); schedulePreview();
     });
-    $("#prevSeg").addEventListener("click", () => step_(-1));
-    $("#nextSeg").addEventListener("click", () => step_(1));
+    $("#prevSeg").addEventListener("click", () => stepSegment(-1));
+    $("#nextSeg").addEventListener("click", () => stepSegment(1));
     $("#segJump").addEventListener("change", (e) => {
       const s = state.wave?.segments[Number(e.target.value)];
       if (s) seekTo(s.a_start);
     });
-    $("#downloadLink").addEventListener("click", () => setTimeout(() => {}, 0));
+
     $("#newBtn").addEventListener("click", async () => {
       await api("/api/new", { method: "POST" });
       location.reload();
     });
-  }
-
-  function step_(dir) {
-    if (!state.wave) return;
-    const segs = state.wave.segments;
-    let idx = segs.findIndex((s) => state.scrubTime < s.a_start);
-    idx = idx < 0 ? segs.length - 1 : Math.max(0, idx - 1);
-    const target = segs[Math.max(0, Math.min(segs.length - 1, idx + dir))];
-    if (target) seekTo(target.a_start);
   }
 
   document.addEventListener("DOMContentLoaded", boot);

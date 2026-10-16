@@ -20,6 +20,7 @@ class SegmentTiming:
     out_duration: float  # length on the output timeline
     a_start: float
     a_end: float
+    input_index: int = 0  # 0-based ffmpeg input backing ``source``
 
 
 def plan_segment_timings(segments: List[Segment], b_duration: float) -> List[SegmentTiming]:
@@ -46,6 +47,45 @@ def plan_segment_timings(segments: List[Segment], b_duration: float) -> List[Seg
                 out_duration=out_duration,
                 a_start=seg.a_start,
                 a_end=seg.a_end,
+                input_index=0 if seg.source == "A" else 1,
+            )
+        )
+    return timings
+
+
+def plan_segment_timings_multi(
+    segments: List[Segment], source_durations: List[float]
+) -> List[SegmentTiming]:
+    """Like :func:`plan_segment_timings` but for an arbitrary number of sources.
+
+    ``source_durations[k]`` is the length of the media backing track ``k``; the
+    in-point comes from ``Segment.src_start`` (falling back to the reference
+    time for the reference track).
+    """
+    timings: List[SegmentTiming] = []
+    for seg in segments:
+        out_duration = max(0.0, seg.a_end - seg.a_start)
+        if out_duration <= 0:
+            continue
+        index = int(getattr(seg, "source_index", 0) or 0)
+        index = min(max(index, 0), max(len(source_durations) - 1, 0))
+        duration = source_durations[index] if index < len(source_durations) else 0.0
+        raw_start = getattr(seg, "src_start", -1.0)
+        if raw_start is None or raw_start < 0:
+            raw_start = seg.a_start if index == 0 else seg.b_start
+        if duration:
+            src_start = max(0.0, min(float(raw_start), max(duration - 0.01, 0.0)))
+        else:
+            src_start = max(0.0, float(raw_start))
+        timings.append(
+            SegmentTiming(
+                index=seg.index,
+                source=seg.source,
+                src_start=src_start,
+                out_duration=out_duration,
+                a_start=seg.a_start,
+                a_end=seg.a_end,
+                input_index=index,
             )
         )
     return timings

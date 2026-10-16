@@ -124,3 +124,53 @@ def test_render_crossfade_shortens(tmp_path):
     )
     out_info = probe_media(rendered.path)
     assert out_info.duration < 6.0
+
+
+def _prepare_ab(tmp_path):
+    a_path = str(tmp_path / "a.mp4")
+    b_path = str(tmp_path / "b.mp4")
+    _make_video(a_path, "320x240", 15, 6, 440)
+    _make_video(b_path, "320x240", 15, 6, 330)
+    a_wav = str(tmp_path / "a.wav")
+    b_wav = str(tmp_path / "b.wav")
+    extract_audio(a_path, a_wav, sample_rate=22050)
+    extract_audio(b_path, b_wav, sample_rate=22050)
+    return a_path, b_path, a_wav, b_wav
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+@pytest.mark.parametrize("effect", ["fadewhite", "fadeblack"])
+def test_render_dip_effect_keeps_length(tmp_path, effect):
+    a_path, b_path, a_wav, b_wav = _prepare_ab(tmp_path)
+    media_a = probe_media(a_path)
+    media_b = probe_media(b_path)
+    result = _alignment()
+    cfg = TransitionConfig(interval_seconds=2.0, effect=effect, effect_duration=0.3)
+    plan = generate_transitions(result, cfg)
+    output = OutputConfig(path=str(tmp_path / f"out_{effect}.mp4"), width=320, height=240, fps=15)
+
+    from pianosync.video.render import render_final_video
+
+    rendered = render_final_video(plan, result, media_a, media_b, a_wav, b_wav, output, cfg)
+    out_info = probe_media(rendered.path)
+    assert out_info.has_video and out_info.has_audio
+    assert abs(out_info.duration - 6.0) < 0.6
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+@pytest.mark.parametrize("effect", ["dissolve", "slideleft", "circleopen", "fadegrays"])
+def test_render_xfade_effect_shortens(tmp_path, effect):
+    a_path, b_path, a_wav, b_wav = _prepare_ab(tmp_path)
+    media_a = probe_media(a_path)
+    media_b = probe_media(b_path)
+    result = _alignment()
+    cfg = TransitionConfig(interval_seconds=2.0, effect=effect, effect_duration=0.3)
+    plan = generate_transitions(result, cfg)
+    output = OutputConfig(path=str(tmp_path / f"out_{effect}.mp4"), width=320, height=240, fps=15)
+
+    from pianosync.video.render import render_final_video
+
+    rendered = render_final_video(plan, result, media_a, media_b, a_wav, b_wav, output, cfg)
+    out_info = probe_media(rendered.path)
+    assert out_info.has_video and out_info.has_audio
+    assert out_info.duration < 6.0

@@ -64,8 +64,53 @@ def test_crossfade_shortens_audio():
     assert abs(out.size - expected) < 10
 
 
+def test_xfade_family_shortens_audio():
+    # Any xfade-family effect (not just "crossfade") overlaps the audio.
+    sr = 8000
+    a = np.ones(int(6.0 * sr), dtype=np.float32) * 0.5
+    b = np.ones(int(6.0 * sr), dtype=np.float32) * 0.5
+    out, _ = assemble_audio(
+        _segments(), _tm(), a, sr, b, sr, audio_mode="A", effect="dissolve", effect_duration=0.5
+    )
+    expected = 6.0 * sr - 2 * 0.5 * sr
+    assert abs(out.size - expected) < 10
+
+
+def test_dip_effect_keeps_length():
+    # Dip-to-colour effects (fadeblack/fadewhite) preserve the output length.
+    sr = 8000
+    a = np.ones(int(6.0 * sr), dtype=np.float32) * 0.5
+    b = np.ones(int(6.0 * sr), dtype=np.float32) * 0.5
+    out, _ = assemble_audio(
+        _segments(), _tm(), a, sr, b, sr, audio_mode="A", effect="fadewhite", effect_duration=0.5
+    )
+    assert abs(out.size - int(6.0 * sr)) <= 2
+
+
 def test_empty_mode_returns_empty():
     sr = 8000
     a = np.ones(int(6.0 * sr), dtype=np.float32)
     out, _ = assemble_audio(_segments(), _tm(), a, sr, a, sr, audio_mode="none")
     assert out.size == 0
+
+
+def test_aligned_mode_has_no_boundary_click():
+    # Two sources with opposite DC offset: a hard cut would jump by ~1.0.
+    sr = 8000
+    a = np.full(int(6.0 * sr), 0.5, dtype=np.float32)
+    b = np.full(int(6.0 * sr), -0.5, dtype=np.float32)
+    out, _ = assemble_audio(_segments(), _tm(), a, sr, b, sr, audio_mode="aligned")
+    max_jump = float(np.max(np.abs(np.diff(out))))
+    assert max_jump < 0.05, f"click detected at a boundary (jump={max_jump:.3f})"
+
+
+def test_cut_mode_keeps_boundary_amplitude():
+    # Mode A is a single continuous performance: cuts must not dip to silence.
+    sr = 8000
+    a = np.full(int(6.0 * sr), 0.5, dtype=np.float32)
+    b = np.full(int(6.0 * sr), 0.1, dtype=np.float32)
+    out, _ = assemble_audio(_segments(), _tm(), a, sr, b, sr, audio_mode="A")
+    boundary = int(2.0 * sr)
+    window = out[boundary - 200 : boundary + 200]
+    assert np.min(window) > 0.4
+    assert float(np.max(np.abs(np.diff(out)))) < 0.05

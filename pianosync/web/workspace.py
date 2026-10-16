@@ -4,6 +4,10 @@ The web edition keeps a single workspace (local, single-user), mirroring the
 desktop app's single project. Long operations run in background threads via
 :mod:`pianosync.web.jobs`; this module only holds data and pure helpers so it can
 be unit-tested without a server.
+
+Up to :data:`pianosync.core.analysis.MAX_TRACKS` performances can be combined.
+Track 0 is the reference; every other track is aligned onto it, and the rendered
+video rotates through the registered performances.
 """
 
 from __future__ import annotations
@@ -17,11 +21,11 @@ import numpy as np
 from ..ai.gemini import GeminiClient
 from ..audio.confidence import onset_peak_times
 from ..audio.envelope import envelope_from_wav
-from ..config import AlignmentConfig, OutputConfig, TransitionConfig
-from ..core.analysis import AnalysisEngine
-from ..core.transitions import TransitionPlan, generate_transitions
+from ..config import EFFECTS, AlignmentConfig, OutputConfig, TransitionConfig
+from ..core.analysis import MAX_TRACKS, AnalysisEngine, Track
+from ..core.transitions import TransitionPlan, generate_transitions, generate_transitions_multi
 from ..errors import GeminiError
-from ..video.render import RenderResult, render_final_video
+from ..video.render import RenderResult, RenderTrack, render_final_video_multi
 
 MAX_WAVE_POINTS = 1600
 MAX_MAP_POINTS = 1200
@@ -59,11 +63,7 @@ class Workspace:
         os.makedirs(output_dir, exist_ok=True)
         self.lock = threading.RLock()
 
-        self.path_a: Optional[str] = None
-        self.path_b: Optional[str] = None
-        self.perf_a = None
-        self.perf_b = None
-        self.alignment = None
+        self.tracks: List[Track] = []
         self.plan: Optional[TransitionPlan] = None
         self.manual_points: List[Tuple[float, float]] = []
         self.transition = TransitionConfig()
@@ -74,17 +74,23 @@ class Workspace:
     # -- lifecycle ------------------------------------------------------
     def reset(self) -> None:
         with self.lock:
-            self.path_a = self.path_b = None
-            self.perf_a = self.perf_b = None
-            self.alignment = None
+            self.tracks = []
             self.plan = None
             self.manual_points = []
             self.ai_note = None
             self.last_render = None
 
     @property
+    def paths(self) -> List[str]:
+        return [t.path for t in self.tracks]
+
+    @property
+    def reference(self) -> Optional[Track]:
+        return self.tracks[0] if self.tracks else None
+
+    @property
     def has_alignment(self) -> bool:
-        return self.alignment is not None
+        return len(self.tracks) >= 2
 
     # -- analysis -------------------------------------------------------
     def analyze(
@@ -95,27 +101,46 @@ class Workspace:
         use_ai: bool = True,
         progress=None,
     ) -> dict:
+        return self.analyze_paths(
+            [path_a, path_b], quality=quality, use_ai=use_ai, progress=progress
+        )
+
+    def analyze_paths(
+        self,
+        paths: List[str],
+        quality: str = "balanced",
+        use_ai: bool = True,
+        progress=None,
+    ) -> dict:
         with self.lock:
             self.engine = AnalysisEngine(self.engine.cache_dir, AlignmentConfig(quality=quality))
-            self.path_a, self.path_b = path_a, path_b
-            perf_a = self.engine.analyze_performance(path_a, progress=progress)
-            perf_b = self.engine.analyze_performance(path_b, progress=progress)
-            alignment = self.engine.align(perf_a, perf_b, progress=progress)
-            self.perf_a, self.perf_b, self.alignment = perf_a, perf_b, alignment
+            self.tracks = self.engine.analyze_many(paths, progress=progress)
             self.ai_note = None
             self.manual_points = []
-            self.plan = generate_transitions(alignment, self.transition)
+            self.plan = self._build_plan()
             if use_ai:
-                self.ai_note = self._ai_note(perf_a, perf_b)
+                self.ai_note = self._ai_note()
         return self.status_payload()
 
-    def _ai_note(self, perf_a, perf_b) -> Optional[str]:
+    def _build_plan(self) -> TransitionPlan:
+        if len(self.tracks) == 2:
+            return generate_transitions(
+                self.tracks[1].alignment,
+                self.transition,
+                user_points=self.manual_points,
+            )
+        return generate_transitions_multi(
+            self.tracks, self.transition, user_points=self.manual_points
+        )
+
+    def _ai_note(self) -> Optional[str]:
         client = GeminiClient()
-        if not client.configured:
+        if not client.configured or len(self.tracks) < 2:
             return None
         try:
             verdict = client.verify_same_piece(
-                feature_summary(perf_a.features), feature_summary(perf_b.features)
+                feature_summary(self.tracks[0].features),
+                feature_summary(self.tracks[1].features),
             )
             if verdict.get("same") is not None and verdict["same"] < 0.5:
                 return (
@@ -128,14 +153,12 @@ class Workspace:
 
     # -- transitions ----------------------------------------------------
     def regenerate(self, settings: Optional[dict] = None) -> dict:
-        if self.alignment is None:
+        if not self.has_alignment:
             raise ValueError("분석을 먼저 실행하세요.")
         with self.lock:
             if settings:
                 self._apply_transition_settings(settings)
-            self.plan = generate_transitions(
-                self.alignment, self.transition, user_points=self.manual_points
-            )
+            self.plan = self._build_plan()
         return self.plan_payload()
 
     def _apply_transition_settings(self, s: dict) -> None:
@@ -144,7 +167,7 @@ class Workspace:
             cfg.interval_seconds = float(s["interval_seconds"])
         if "mode" in s and s["mode"] in ("musical", "fixed_output"):
             cfg.mode = s["mode"]
-        if "effect" in s and s["effect"] in ("cut", "crossfade", "fadeblack"):
+        if "effect" in s and s["effect"] in EFFECTS:
             cfg.effect = s["effect"]
         if "effect_duration" in s:
             cfg.effect_duration = float(s["effect_duration"])
@@ -152,8 +175,8 @@ class Workspace:
             cfg.audio_mode = s["audio_mode"]
         if "snap_to_onset" in s:
             cfg.snap_to_onset = bool(s["snap_to_onset"])
-        if "start_with" in s and s["start_with"] in ("A", "B"):
-            cfg.start_with = s["start_with"]
+        if "start_with" in s and isinstance(s["start_with"], str):
+            cfg.start_with = s["start_with"].upper()
         if "alternate" in s:
             cfg.alternate = bool(s["alternate"])
 
@@ -163,10 +186,11 @@ class Workspace:
         return self.regenerate()
 
     def add_anchor(self, a_time: float, b_time: Optional[float] = None) -> dict:
-        if self.alignment is None:
+        if not self.has_alignment:
             raise ValueError("분석을 먼저 실행하세요.")
         if b_time is None:
-            b_time = self.alignment.time_map.b_for_a(a_time)
+            second = self.tracks[1]
+            b_time = second.source_time(a_time)
         points = list(self.manual_points)
         points.append((float(a_time), float(b_time)))
         return self.set_anchors(points)
@@ -179,17 +203,17 @@ class Workspace:
 
     # -- rendering ------------------------------------------------------
     def render(self, options: Optional[dict] = None, progress=None) -> RenderResult:
-        if self.plan is None or self.alignment is None:
+        if self.plan is None or not self.has_alignment:
             raise ValueError("분석과 전환 생성이 먼저 필요합니다.")
         with self.lock:
             self._apply_output_settings(options or {})
-            result = render_final_video(
+            render_tracks = [
+                RenderTrack(media=t.media, wav_path=t.wav_path, time_map=t.time_map)
+                for t in self.tracks
+            ]
+            result = render_final_video_multi(
                 self.plan,
-                self.alignment,
-                self.perf_a.media,
-                self.perf_b.media,
-                self.perf_a.wav_path,
-                self.perf_b.wav_path,
+                render_tracks,
                 self.output,
                 self.transition,
                 progress=progress,
@@ -218,53 +242,59 @@ class Workspace:
             cfg.preset = str(s["preset"])
         if "include_audio" in s:
             cfg.include_audio = bool(s["include_audio"])
-        if "effect" in s and s["effect"] in ("cut", "crossfade", "fadeblack"):
+        if "effect" in s and s["effect"] in EFFECTS:
             self.transition.effect = s["effect"]
         if "audio_mode" in s and s["audio_mode"] in ("A", "B", "aligned", "none"):
             self.transition.audio_mode = s["audio_mode"]
 
     # -- payloads -------------------------------------------------------
+    def _source_dict(self, track: Track) -> dict:
+        return {
+            "index": track.index,
+            "label": track.label,
+            "name": os.path.basename(track.path),
+            "width": track.media.width,
+            "height": track.media.height,
+            "fps": round(track.media.fps, 2),
+            "duration": round(track.features.duration, 2),
+            "tempo_bpm": round(track.features.tempo_bpm, 1),
+            "is_reference": track.is_reference,
+        }
+
     def status_payload(self) -> dict:
         base = {
             "ready": self.has_alignment,
             "ai_note": self.ai_note,
             "anchor_count": len(self.manual_points),
             "render": self._render_dict(),
+            "source_count": len(self.tracks),
+            "max_sources": MAX_TRACKS,
         }
         if not self.has_alignment:
             return base
-        a = self.perf_a
-        b = self.perf_b
-        base.update(
-            {
-                "a": {
-                    "name": os.path.basename(a.path),
-                    "width": a.media.width,
-                    "height": a.media.height,
-                    "fps": round(a.media.fps, 2),
-                    "duration": round(a.features.duration, 2),
-                    "tempo_bpm": round(a.features.tempo_bpm, 1),
-                },
-                "b": {
-                    "name": os.path.basename(b.path),
-                    "width": b.media.width,
-                    "height": b.media.height,
-                    "fps": round(b.media.fps, 2),
-                    "duration": round(b.features.duration, 2),
-                    "tempo_bpm": round(b.features.tempo_bpm, 1),
-                },
-                "alignment": {
-                    "mean_confidence": round(self.alignment.confidence.mean, 3),
-                    "low_fraction": round(self.alignment.confidence.low_fraction, 4),
-                    "low_segments": [
-                        [round(a0, 2), round(b0, 2)]
-                        for a0, b0 in self.alignment.low_confidence_segments_seconds()
-                    ],
-                },
-                "plan": self.plan.to_dict() if self.plan else None,
-            }
-        )
+        sources = [self._source_dict(t) for t in self.tracks]
+        base["sources"] = sources
+        base["a"] = sources[0]
+        base["b"] = sources[1]
+        base["alignment"] = self._alignment_summary()
+        base["plan"] = self.plan.to_dict() if self.plan else None
         return base
+
+    def _alignment_summary(self) -> dict:
+        paired = [t for t in self.tracks[1:] if t.alignment is not None]
+        if not paired:
+            return {"mean_confidence": 1.0, "low_fraction": 0.0, "low_segments": []}
+        low_segments: List[List[float]] = []
+        for t in paired:
+            low_segments.extend(
+                [round(a, 2), round(b, 2)]
+                for a, b in t.alignment.low_confidence_segments_seconds()
+            )
+        return {
+            "mean_confidence": round(float(np.mean([t.alignment.confidence.mean for t in paired])), 3),
+            "low_fraction": round(float(np.mean([t.alignment.confidence.low_fraction for t in paired])), 4),
+            "low_segments": low_segments,
+        }
 
     def plan_payload(self) -> dict:
         return {
@@ -290,45 +320,66 @@ class Workspace:
     def waveform_payload(self) -> dict:
         if not self.has_alignment:
             return {"ready": False}
-        a, b = self.perf_a, self.perf_b
-        env_a_t, env_a_v = envelope_from_wav(a.wav_path)
-        env_b_t, env_b_v = envelope_from_wav(b.wav_path)
-        env_a_t, env_a_v = _downsample(env_a_t, env_a_v, MAX_WAVE_POINTS)
-        env_b_t, env_b_v = _downsample(env_b_t, env_b_v, MAX_WAVE_POINTS)
+        ref = self.tracks[0]
 
-        a_times = self.alignment.time_map.a_times
-        b_curve = self.alignment.time_map.a_to_b_sec
-        map_t, map_v = _downsample(a_times, b_curve, MAX_MAP_POINTS)
+        envs: List[dict] = []
+        for track in self.tracks:
+            et, ev = envelope_from_wav(track.wav_path)
+            et, ev = _downsample(et, ev, MAX_WAVE_POINTS)
+            envs.append({"index": track.index, "label": track.label, "t": et, "v": ev})
 
-        conf_t, conf_v = _downsample(
-            a_times, self.alignment.confidence.per_frame, MAX_WAVE_POINTS
-        )
+        ref_times = ref.features.times
 
-        onsets = onset_peak_times(self.perf_a.features)
+        maps: List[dict] = []
+        for track in self.tracks[1:]:
+            if track.time_map is None:
+                continue
+            mt, mv = _downsample(ref_times, track.time_map.a_to_b_sec, MAX_MAP_POINTS)
+            maps.append({"index": track.index, "label": track.label, "a": mt, "b": mv})
+
+        paired = [t for t in self.tracks[1:] if t.alignment is not None]
+        if paired:
+            conf = np.min(np.vstack([t.alignment.confidence.per_frame for t in paired]), axis=0)
+        else:
+            conf = np.ones_like(ref_times, dtype=np.float32)
+        conf_t, conf_v = _downsample(ref_times, conf, MAX_WAVE_POINTS)
+
+        onsets = onset_peak_times(ref.features)
         if onsets.size > 400:
             step = int(np.ceil(onsets.size / 400))
             onsets = onsets[::step]
 
+        low_segments: List[List[float]] = []
+        for t in paired:
+            low_segments.extend(
+                [round(a, 3), round(b, 3)] for a, b in t.alignment.low_confidence_segments_seconds()
+            )
+
+        env_a = envs[0]
+        env_b = envs[1] if len(envs) > 1 else {"index": 1, "label": "B", "t": [], "v": []}
+        first_map = maps[0] if maps else {"a": [], "b": []}
+
         return {
             "ready": True,
-            "a_duration": round(a.features.duration, 3),
-            "b_duration": round(b.features.duration, 3),
-            "env_a": {"t": env_a_t, "v": env_a_v},
-            "env_b": {"t": env_b_t, "v": env_b_v},
-            "map": {"a": map_t, "b": map_v},
+            "a_duration": round(ref.features.duration, 3),
+            "b_duration": round(self.tracks[1].features.duration, 3) if len(self.tracks) > 1 else 0.0,
+            "env_a": {"t": env_a["t"], "v": env_a["v"]},
+            "env_b": {"t": env_b["t"], "v": env_b["v"]},
+            "envs": envs,
+            "map": {"a": first_map["a"], "b": first_map["b"]},
+            "maps": maps,
             "confidence": {"t": conf_t, "v": conf_v},
-            "low_segments": [
-                [round(a0, 3), round(b0, 3)]
-                for a0, b0 in self.alignment.low_confidence_segments_seconds()
-            ],
+            "low_segments": low_segments,
             "onsets": [round(float(t), 3) for t in onsets.tolist()],
             "anchors": [[round(x, 3), round(y, 3)] for x, y in self.manual_points],
             "segments": [
                 {
                     "index": s.index,
                     "source": s.source,
+                    "source_index": s.source_index,
                     "a_start": round(s.a_start, 3),
                     "a_end": round(s.a_end, 3),
+                    "src_start": round(s.src_start, 3) if s.src_start >= 0 else round(s.b_start, 3),
                     "b_start": round(s.b_start, 3),
                     "confidence": round(s.confidence, 3),
                     "reason": s.reason,

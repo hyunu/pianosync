@@ -62,7 +62,9 @@ def test_health_and_config(client):
 def test_index_served(client):
     res = client.get("/")
     assert res.status_code == 200
-    assert "Piano Sync Switcher" in res.text
+    assert "Piano Sync" in res.text
+    assert "/static/app.js" in res.text
+    assert "/static/styles.css" in res.text
 
 
 def test_upload(client, tmp_path):
@@ -148,4 +150,48 @@ def test_render_and_download(client):
     download = client.get("/api/download")
     assert download.status_code == 200
     assert download.headers["content-type"] == "video/mp4"
+    assert len(download.content) > 1000
+
+
+@pytest.mark.skipif(not _has_ffmpeg(), reason="ffmpeg not installed")
+def test_multi_source_workflow(client):
+    body = {
+        "paths": [SAMPLE_A, SAMPLE_B, SAMPLE_A],
+        "quality": "fast",
+        "interval_seconds": 3,
+        "use_ai": False,
+    }
+    job = _wait(client, client.post("/api/analyze", json=body).json()["job_id"])
+    assert job["status"] == "done", job.get("error")
+
+    status = client.get("/api/status").json()
+    assert status["ready"] is True
+    assert status["source_count"] == 3
+    assert status["max_sources"] == 5
+    assert [s["label"] for s in status["sources"]] == ["A", "B", "C"]
+
+    labels = [s["source"] for s in status["plan"]["segments"]]
+    assert labels[0] == "A"
+    assert set(labels) <= {"A", "B", "C"}
+    assert len(set(labels)) >= 2
+
+    wave = client.get("/api/waveform").json()
+    assert len(wave["envs"]) == 3
+    assert len(wave["maps"]) == 2
+
+    frame_c = client.get("/api/frame", params={"index": 2, "t": 1.0, "w": 160})
+    assert frame_c.status_code == 200
+    assert frame_c.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    render = client.post(
+        "/api/render",
+        json={"filename": "multi.mp4", "width": 426, "height": 240, "fps": 24, "crf": 30,
+              "effect": "cut", "audio_mode": "A", "include_audio": True},
+    ).json()
+    rjob = _wait(client, render["job_id"])
+    assert rjob["status"] == "done", rjob.get("error")
+    assert rjob["result"]["segments"] >= 3
+
+    download = client.get("/api/download")
+    assert download.status_code == 200
     assert len(download.content) > 1000

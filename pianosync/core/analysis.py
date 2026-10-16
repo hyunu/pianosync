@@ -18,8 +18,14 @@ from ..audio.extract import MediaInfo, extract_audio, load_wav, probe_media
 from ..audio.features import FeatureSet, compute_features
 from ..config import AlignmentConfig
 from ..errors import AudioExtractionError, MediaError
-from .alignment import AlignmentResult, align_featuresets
+from .alignment import AlignmentResult, TimeMap, align_featuresets
 from .progress import Progress
+
+#: Display labels for up to eight simultaneous performances (A, B, C, …).
+LABELS = "ABCDEFGH"
+
+#: Maximum number of performances a project can combine.
+MAX_TRACKS = 5
 
 
 @dataclass
@@ -28,6 +34,35 @@ class PerformanceAnalysis:
     wav_path: str
     media: MediaInfo
     features: FeatureSet
+
+
+@dataclass
+class Track:
+    """One performance in a multi-video project.
+
+    Index 0 is the reference ("A") that every other track is aligned against;
+    :attr:`time_map` maps reference seconds to this track's own seconds and is
+    ``None`` for the reference itself.
+    """
+
+    index: int
+    label: str
+    path: str
+    wav_path: str
+    media: MediaInfo
+    features: FeatureSet
+    alignment: Optional[AlignmentResult] = None  # vs. the reference; None for the reference
+    time_map: Optional[TimeMap] = None
+
+    @property
+    def is_reference(self) -> bool:
+        return self.index == 0
+
+    def source_time(self, ref_time: float) -> float:
+        """Return this track's own time for a given reference time."""
+        if self.is_reference or self.time_map is None:
+            return float(ref_time)
+        return float(self.time_map.b_for_a(ref_time))
 
 
 def _file_identity(path: str) -> str:
@@ -163,3 +198,66 @@ class AnalysisEngine:
         result = align_featuresets(perf_a.features, perf_b.features, self.cfg)
         progress.update(1.0, "Alignment complete")
         return result
+
+    def analyze_many(
+        self,
+        paths: list,
+        progress: Optional[Progress] = None,
+    ) -> "list[Track]":
+        """Analyze two to :data:`MAX_TRACKS` performances and align each to the first.
+
+        The first path is the reference; every other performance is mapped onto
+        it with the same hierarchical DTW used by the two-video flow.
+        """
+        progress = progress or Progress()
+        paths = list(paths)
+        if len(paths) < 2:
+            raise MediaError("At least two performances are required.")
+        if len(paths) > MAX_TRACKS:
+            raise MediaError(f"At most {MAX_TRACKS} performances are supported.")
+        n = len(paths)
+
+        perfs: list[PerformanceAnalysis] = []
+        for i, path in enumerate(paths):
+            def make_cb(i=i):
+                def cb(fraction: float, message: str) -> None:
+                    progress.update(0.02 + 0.52 * (i + fraction) / n, message)
+                return cb
+
+            perfs.append(
+                self.analyze_performance(
+                    path,
+                    progress=Progress(callback=make_cb(), is_cancelled=progress.is_cancelled),
+                )
+            )
+
+        ref = perfs[0]
+        tracks: list[Track] = [
+            Track(0, LABELS[0], ref.path, ref.wav_path, ref.media, ref.features, None, None)
+        ]
+        for i in range(1, n):
+            def make_align_cb(i=i):
+                def cb(fraction: float, message: str) -> None:
+                    progress.update(0.56 + 0.42 * ((i - 1) + fraction) / max(1, n - 1), message)
+                return cb
+
+            alignment = self.align(
+                ref,
+                perfs[i],
+                progress=Progress(callback=make_align_cb(), is_cancelled=progress.is_cancelled),
+            )
+            label = LABELS[i] if i < len(LABELS) else str(i + 1)
+            tracks.append(
+                Track(
+                    i,
+                    label,
+                    perfs[i].path,
+                    perfs[i].wav_path,
+                    perfs[i].media,
+                    perfs[i].features,
+                    alignment,
+                    alignment.time_map,
+                )
+            )
+        progress.update(1.0, "Analysis complete")
+        return tracks

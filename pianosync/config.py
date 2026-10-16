@@ -53,6 +53,41 @@ def get_api_key() -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Transition effects
+# ---------------------------------------------------------------------------
+# "dip" effects fade the outgoing clip through a solid colour and preserve the
+# output length; "xfade" effects blend two clips together (FFmpeg xfade) and
+# shorten the output by the overlap.
+DIP_EFFECTS = ("fadeblack", "fadewhite")
+XFADE_EFFECTS = (
+    "crossfade",
+    "dissolve",
+    "slideleft",
+    "slideright",
+    "circleopen",
+    "fadegrays",
+)
+EFFECTS = ("cut",) + DIP_EFFECTS + XFADE_EFFECTS
+
+#: dip effect -> colour the frame fades through
+DIP_COLORS = {"fadeblack": "black", "fadewhite": "white"}
+#: our effect name -> FFmpeg xfade transition name
+XFADE_TRANSITIONS = {
+    "crossfade": "fade",
+    "dissolve": "dissolve",
+    "slideleft": "slideleft",
+    "slideright": "slideright",
+    "circleopen": "circleopen",
+    "fadegrays": "fadegrays",
+}
+
+
+def normalize_effect(effect: str) -> str:
+    """Return a valid effect name, falling back to a hard cut."""
+    return effect if effect in EFFECTS else "cut"
+
+
+# ---------------------------------------------------------------------------
 # Alignment defaults
 # ---------------------------------------------------------------------------
 
@@ -93,7 +128,7 @@ class TransitionConfig:
     max_interval: float = 60.0
     start_with: str = "A"  # "A" or "B"
     alternate: bool = True
-    effect: str = "cut"  # "cut" | "crossfade" | "fadeblack"
+    effect: str = "cut"  # see pianosync.config.EFFECTS
     effect_duration: float = 0.35
     mode: str = "musical"  # "musical" (mode 1) | "fixed_output" (mode 2)
     snap_to_onset: bool = True

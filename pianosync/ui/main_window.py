@@ -50,7 +50,17 @@ CACHE_ROOT = os.path.join(os.path.expanduser("~"), ".pianosync", "cache")
 
 QUALITY_MAP = {"빠르게": "fast", "균형": "balanced", "정확하게": "accurate"}
 MODE_MAP = {"음악 위치 기준 (모드 1)": "musical", "출력 시간 기준 (모드 2)": "fixed_output"}
-EFFECT_MAP = {"하드 컷": "cut", "크로스페이드": "crossfade", "블랙 페이드": "fadeblack"}
+EFFECT_MAP = {
+    "하드 컷": "cut",
+    "크로스페이드": "crossfade",
+    "블랙 페이드": "fadeblack",
+    "화이트 페이드": "fadewhite",
+    "그레이 페이드": "fadegrays",
+    "디졸브": "dissolve",
+    "좌측 슬라이드": "slideleft",
+    "우측 슬라이드": "slideright",
+    "원형 열기": "circleopen",
+}
 AUDIO_MAP = {"영상 A": "A", "영상 B": "B", "A/B 정렬 전환": "aligned", "오디오 없음": "none"}
 START_MAP = {"영상 A": "A", "영상 B": "B"}
 PRESET_MAP = {"ultrafast": "ultrafast", "veryfast": "veryfast", "fast": "fast", "medium": "medium", "slow": "slow"}

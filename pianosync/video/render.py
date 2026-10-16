@@ -13,18 +13,39 @@ import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import numpy as np
 
 from ..audio.extract import MediaInfo, find_ffmpeg, load_wav
-from ..config import OutputConfig, TransitionConfig
-from ..core.alignment import AlignmentResult
+from ..config import (
+    DIP_COLORS,
+    DIP_EFFECTS,
+    OutputConfig,
+    TransitionConfig,
+    XFADE_EFFECTS,
+    XFADE_TRANSITIONS,
+    normalize_effect,
+)
+from ..core.alignment import AlignmentResult, TimeMap
 from ..core.progress import Progress
 from ..core.transitions import TransitionPlan
 from ..errors import CancelledError, MediaError, PianoSyncError
-from .audiomix import assemble_audio
-from .mapping import SegmentTiming, plan_segment_timings, resolve_output_size
+from .audiomix import assemble_audio_multi
+from .mapping import (
+    SegmentTiming,
+    plan_segment_timings_multi,
+    resolve_output_size,
+)
+
+
+@dataclass
+class RenderTrack:
+    """A performance prepared for rendering."""
+
+    media: MediaInfo
+    wav_path: str
+    time_map: Optional[TimeMap] = None  # reference -> this track (None for reference)
 
 
 @dataclass
@@ -75,20 +96,21 @@ def _segment_filter(
     chain.append(f"scale={width}:{height}:force_original_aspect_ratio=decrease")
     chain.append(f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2")
     chain.append("setsar=1")
-    chain.append(f"fps={fps}")
-    if effect == "fadeblack" and fade > 0:
+    if effect in DIP_EFFECTS and fade > 0:
+        color = DIP_COLORS.get(effect, "black")
         if not is_first:
-            chain.append(f"fade=t=in:st=0:d={fade:.4f}")
+            chain.append(f"fade=t=in:st=0:d={fade:.6f}:color={color}")
         if not is_last:
-            chain.append(f"fade=t=out:st={max(0.0, timing.out_duration - fade):.4f}:d={fade:.4f}")
+            out_start = max(0.0, timing.out_duration - fade)
+            chain.append(f"fade=t=out:st={out_start:.6f}:d={fade:.6f}:color={color}")
+    chain.append(f"fps={fps}")
     chain.append("format=yuv420p")
     return f"[{input_index}:v]" + ",".join(chain) + output_label
 
 
 def _build_filter_complex(
     timings: List[SegmentTiming],
-    media_a: MediaInfo,
-    media_b: MediaInfo,
+    source_durations: Sequence[float],
     width: int,
     height: int,
     fps: float,
@@ -98,8 +120,10 @@ def _build_filter_complex(
     parts: List[str] = []
     labels: List[str] = []
     for n, timing in enumerate(timings):
-        input_index = 0 if timing.source == "A" else 1
-        source_duration = media_a.duration if timing.source == "A" else media_b.duration
+        input_index = int(getattr(timing, "input_index", 0) or 0)
+        source_duration = (
+            source_durations[input_index] if 0 <= input_index < len(source_durations) else 0.0
+        )
         label = f"[s{n}]"
         parts.append(
             _segment_filter(
@@ -120,14 +144,15 @@ def _build_filter_complex(
 
     if len(timings) == 1:
         parts.append(f"{labels[0]}null[vout]")
-    elif effect == "crossfade" and fade > 0:
+    elif effect in XFADE_EFFECTS and fade > 0:
+        transition = XFADE_TRANSITIONS.get(effect, "fade")
         accumulated = timings[0].out_duration
         current = labels[0]
         for n in range(1, len(timings)):
             offset = max(0.0, accumulated - fade)
             out_label = "[vout]" if n == len(timings) - 1 else f"[x{n}]"
             parts.append(
-                f"{current}{labels[n]}xfade=transition=fade:duration={fade:.4f}:"
+                f"{current}{labels[n]}xfade=transition={transition}:duration={fade:.6f}:"
                 f"offset={offset:.6f}{out_label}"
             )
             accumulated = accumulated + timings[n].out_duration - fade
@@ -185,7 +210,7 @@ def _run_ffmpeg_with_progress(
 
 def render_final_video(
     plan: TransitionPlan,
-    alignment: AlignmentResult,
+    alignment: Optional[AlignmentResult],
     media_a: MediaInfo,
     media_b: MediaInfo,
     wav_a: str,
@@ -194,20 +219,44 @@ def render_final_video(
     transition_cfg: TransitionConfig,
     progress: Optional[Progress] = None,
 ) -> RenderResult:
+    """Two-video compatibility wrapper around :func:`render_final_video_multi`."""
+    tracks = [
+        RenderTrack(media=media_a, wav_path=wav_a, time_map=None),
+        RenderTrack(
+            media=media_b,
+            wav_path=wav_b,
+            time_map=alignment.time_map if alignment is not None else None,
+        ),
+    ]
+    return render_final_video_multi(plan, tracks, output, transition_cfg, progress=progress)
+
+
+def render_final_video_multi(
+    plan: TransitionPlan,
+    tracks: Sequence[RenderTrack],
+    output: OutputConfig,
+    transition_cfg: TransitionConfig,
+    progress: Optional[Progress] = None,
+) -> RenderResult:
     progress = progress or Progress()
     ffmpeg = find_ffmpeg()
+    tracks = list(tracks)
+    if not tracks:
+        raise PianoSyncError("There is nothing to render (no inputs).")
 
-    timings = plan_segment_timings(plan.segments, b_duration=media_b.duration or alignment.b_duration)
+    source_durations = [float(t.media.duration or 0.0) for t in tracks]
+    timings = plan_segment_timings_multi(plan.segments, source_durations)
     if not timings:
         raise PianoSyncError("There is nothing to render (no segments).")
 
-    width, height = resolve_output_size(output, media_a.width, media_a.height)
-    fps = output.fps or media_a.fps or 30.0
-    effect = transition_cfg.effect if transition_cfg.effect in ("cut", "crossfade", "fadeblack") else "cut"
+    ref_media = tracks[0].media
+    width, height = resolve_output_size(output, ref_media.width, ref_media.height)
+    fps = output.fps or ref_media.fps or 30.0
+    effect = normalize_effect(transition_cfg.effect)
     fade = _clamp_fade(transition_cfg.effect_duration, timings, effect)
 
     total_video = sum(t.out_duration for t in timings)
-    if effect == "crossfade":
+    if effect in XFADE_EFFECTS:
         total_video -= max(0, len(timings) - 1) * fade
 
     out_dir = os.path.dirname(os.path.abspath(output.path)) or "."
@@ -217,21 +266,12 @@ def render_final_video(
         video_only = os.path.join(tmp, "video_only.mp4")
         err_path = os.path.join(tmp, "ffmpeg.log")
         filter_complex = _build_filter_complex(
-            timings, media_a, media_b, width, height, fps, effect, fade
+            timings, source_durations, width, height, fps, effect, fade
         )
-        cmd = [
-            ffmpeg,
-            "-nostdin",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-progress",
-            "pipe:1",
-            "-nostats",
-            "-i",
-            media_a.path,
-            "-i",
-            media_b.path,
+        cmd = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
+        for track in tracks:
+            cmd += ["-i", track.media.path]
+        cmd += [
             "-filter_complex",
             filter_complex,
             "-map",
@@ -249,13 +289,7 @@ def render_final_video(
             video_only,
         ]
         _run_ffmpeg_with_progress(
-            cmd,
-            total_video,
-            progress,
-            0.05,
-            0.6,
-            "Rendering video…",
-            err_path,
+            cmd, total_video, progress, 0.05, 0.6, "Rendering video…", err_path
         )
 
         include_audio = output.include_audio and transition_cfg.audio_mode != "none"
@@ -277,15 +311,13 @@ def render_final_video(
             )
 
         progress.update(0.68, "Assembling audio…")
-        a_signal, a_sr = load_wav(wav_a)
-        b_signal, b_sr = load_wav(wav_b)
-        audio, sample_rate = assemble_audio(
+        track_signals = []
+        for track in tracks:
+            signal, sample_rate = load_wav(track.wav_path)
+            track_signals.append((signal, sample_rate, track.time_map))
+        audio, sample_rate = assemble_audio_multi(
             plan.segments,
-            alignment.time_map,
-            a_signal,
-            a_sr,
-            b_signal,
-            b_sr,
+            track_signals,
             audio_mode=transition_cfg.audio_mode,
             effect=effect,
             effect_duration=fade,
