@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Piano Sync</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0b0d;
+      --fg: #e7e9ec;
+      --fg2: #a2a8b0;
+      --border: #2a3038;
+      --accent: #3ecf8e;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      font-family: system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      padding: calc(24px + var(--safe-top)) 20px calc(24px + var(--safe-bottom));
+    }
+    h1 { font-size: 1.25rem; margin: 0 0 8px; }
+    p { margin: 0 0 16px; color: var(--fg2); font-size: 0.875rem; line-height: 1.5; }
+    label { display: block; font-size: 0.75rem; color: var(--fg2); margin-bottom: 6px; }
+    input {
+      width: 100%; height: 44px; padding: 0 12px;
+      border: 1px solid var(--border); border-radius: 10px;
+      background: #12141a; color: var(--fg); font-size: 16px;
+    }
+    .row { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
+    button {
+      height: 44px; border: none; border-radius: 10px; font-size: 0.9375rem; font-weight: 600;
+      cursor: pointer;
+    }
+    .primary { background: var(--accent); color: #0a0b0d; }
+    .ghost { background: transparent; color: var(--fg2); border: 1px solid var(--border); }
+    .note { margin-top: 20px; font-size: 0.75rem; color: var(--fg2); line-height: 1.55; }
+    .err { color: #f2727b; font-size: 0.8125rem; margin-top: 10px; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <h1>Piano Sync</h1>
+  <p id="lead">연결할 서버 주소를 입력하세요. Android 단독 버전(예정)은 <code>127.0.0.1</code>을 사용합니다.</p>
+  <label for="serverUrl">서버 URL</label>
+  <input id="serverUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false"
+    placeholder="http://192.168.0.10:8765" />
+  <div class="row">
+    <button type="button" class="primary" id="connectBtn">연결</button>
+    <button type="button" class="ghost" id="localBtn" hidden>이 기기(localhost)</button>
+  </div>
+  <p class="err" id="err" aria-live="polite"></p>
+  <p class="note">
+    <strong>단독 동작</strong>(Mac/PC 없이 폰에서 분석·렌더)은 아직 앱에 포함되지 않았습니다.
+    로드맵: <code>docs/mobile-standalone.md</code>
+  </p>
+  <script src="./launcher.js"></script>
+</body>
+</html>

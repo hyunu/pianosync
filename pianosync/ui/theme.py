@@ -20,7 +20,7 @@ from __future__ import annotations
 import os
 import string
 import tempfile
-from typing import Dict
+from typing import Dict, Optional
 
 # --------------------------------------------------------------------- tokens
 
@@ -63,6 +63,24 @@ FONT_DISPLAY = "AppleMyungjo"       # Korean serif — titles, staves, running h
 FONT_TEXT = "Apple SD Gothic Neo"   # Korean humanist sans — body and controls
 FONT_MONO = "Menlo"                 # figures and timecodes only
 
+# First installed family wins; keeps macOS names as defaults when nothing matches.
+_FONT_DISPLAY_CANDIDATES = (
+    "AppleMyungjo",
+    "Nanum Myeongjo",
+    "Noto Serif CJK KR",
+    "Serif",
+)
+_FONT_TEXT_CANDIDATES = (
+    "Apple SD Gothic Neo",
+    "Pretendard",
+    "Pretendard Variable",
+    "Nanum Gothic",
+    "Noto Sans CJK KR",
+    "Malgun Gothic",
+    "Sans Serif",
+)
+_FONT_MONO_CANDIDATES = ("Menlo", "SF Mono", "Consolas", "Monospace")
+
 # Integer space scale, so Python layout code uses the same ladder as the QSS.
 SPACE = {k[3:]: int(v) for k, v in TOKENS.items() if k.startswith("SP_")}
 
@@ -81,6 +99,7 @@ WAVE = {
     "text": TOKENS["INK3"],
     "display_font": FONT_DISPLAY,
     "mono_font": FONT_MONO,
+    "text_font": FONT_TEXT,
 }
 
 
@@ -315,12 +334,37 @@ def _ensure_assets() -> Dict[str, str]:
     return {"CHECK_ON": on.replace("\\", "/"), "CHECK_OFF": off.replace("\\", "/")}
 
 
-def build_stylesheet() -> str:
+def _resolve_font(*candidates: str, fallback: str) -> str:
+    """Pick the first family name that Qt reports as installed."""
+    try:
+        from PySide6.QtGui import QFontDatabase
+
+        installed = {name.casefold() for name in QFontDatabase.families()}
+        for name in candidates:
+            if name.casefold() in installed:
+                return name
+    except Exception:  # noqa: BLE001 — headless / no Qt platform plugin
+        pass
+    return fallback
+
+
+def _resolved_ui_fonts() -> Dict[str, str]:
+    return {
+        "FONT_TEXT": _resolve_font(*_FONT_TEXT_CANDIDATES, fallback=FONT_TEXT),
+        "FONT_DISPLAY": _resolve_font(*_FONT_DISPLAY_CANDIDATES, fallback=FONT_DISPLAY),
+        "FONT_MONO": _resolve_font(*_FONT_MONO_CANDIDATES, fallback=FONT_MONO),
+    }
+
+
+def build_stylesheet(fonts: Optional[Dict[str, str]] = None) -> str:
     """Return the full Qt style sheet with every token substituted."""
+    fonts = fonts or {
+        "FONT_TEXT": FONT_TEXT,
+        "FONT_MONO": FONT_MONO,
+        "FONT_DISPLAY": FONT_DISPLAY,
+    }
     values = dict(TOKENS)
-    values["FONT_TEXT"] = FONT_TEXT
-    values["FONT_MONO"] = FONT_MONO
-    values["FONT_DISPLAY"] = FONT_DISPLAY
+    values.update(fonts)
     values.update(_ensure_assets())
     return _QSS.substitute(values)
 
@@ -334,7 +378,12 @@ def apply_theme(app) -> None:
     if fusion is not None:
         app.setStyle(fusion)
 
-    font = QFont(FONT_TEXT)
+    fonts = _resolved_ui_fonts()
+    WAVE["display_font"] = fonts["FONT_DISPLAY"]
+    WAVE["mono_font"] = fonts["FONT_MONO"]
+    WAVE["text_font"] = fonts["FONT_TEXT"]
+
+    font = QFont(fonts["FONT_TEXT"])
     font.setPixelSize(int(TOKENS["FS_BASE"]))
     app.setFont(font)
 
@@ -356,4 +405,4 @@ def apply_theme(app) -> None:
         palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(t["INK3"]))
 
     app.setPalette(palette)
-    app.setStyleSheet(build_stylesheet())
+    app.setStyleSheet(build_stylesheet(fonts))

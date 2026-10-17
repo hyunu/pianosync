@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Piano Sync</string>
+    <string name="title_activity_main">Piano Sync</string>
+    <string name="package_name">studio.pianosync.app</string>
+    <string name="custom_url_scheme">studio.pianosync.app</string>
+</resources>

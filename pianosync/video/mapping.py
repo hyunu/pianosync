@@ -7,7 +7,11 @@ from typing import List, Tuple
 
 import numpy as np
 
-from ..config import OutputConfig
+from ..config import (
+    OutputConfig,
+    SIZE_PRESETS,
+    normalize_size,
+)
 from ..core.alignment import TimeMap
 from ..core.transitions import Segment
 
@@ -94,9 +98,23 @@ def plan_segment_timings_multi(
 def resolve_output_size(
     output: OutputConfig, a_width: int, a_height: int
 ) -> Tuple[int, int]:
-    """Return the output (width, height), even-ised for H.264."""
-    width = output.width or a_width or 1920
-    height = output.height or a_height or 1080
+    """Return the output (width, height), even-ised for H.264.
+
+    Precedence: explicit ``width``/``height`` (both non-zero) > the ``size``
+    preset > the reference source resolution. The default preset is
+    ``"original"``, which preserves the source resolution *and orientation* so a
+    portrait phone recording is not letterboxed into a landscape frame.
+    """
+    if output.width and output.height:
+        width, height = int(output.width), int(output.height)
+    else:
+        preset = SIZE_PRESETS.get(normalize_size(getattr(output, "size", None)))
+        if preset is None:  # "original" (or unknown) -> follow the source
+            width = int(output.width or a_width or 1920)
+            height = int(output.height or a_height or 1080)
+        else:
+            width = int(output.width or preset[0])
+            height = int(output.height or preset[1])
     width -= width % 2
     height -= height % 2
     return max(width, 2), max(height, 2)

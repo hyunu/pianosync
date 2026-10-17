@@ -10,6 +10,10 @@
   const icon = (n) => `<svg class="ic"><use href="#i-${n}"/></svg>`;
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+  // Font-menu sentinel: selecting it reveals #overlayFontPath (see server FONT_CUSTOM).
+  const FONT_CUSTOM = "__custom__";
+  const HANGUL_RE = /[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7A3]/;
+
   const state = {
     config: null,
     sources: [],        // {id, path, name, size, uploading}
@@ -24,8 +28,21 @@
     step: 1,
   };
 
+  // Performance lane colours come from CSS custom properties so they can be
+  // tuned per theme (the neon dark palette fails contrast on a light
+  // background). Falls back to the server-provided palette.
+  let laneCache = { theme: null, cols: null };
+  function laneColors() {
+    const theme = document.documentElement.dataset.theme || "dark";
+    if (laneCache.theme !== theme) {
+      const cs = getComputedStyle(document.documentElement);
+      const vars = [1, 2, 3, 4, 5].map((i) => cs.getPropertyValue("--lane-" + i).trim()).filter(Boolean);
+      laneCache = { theme, cols: vars.length === 5 ? vars : (state.config?.source_colors || ["#3ecf8e"]) };
+    }
+    return laneCache.cols;
+  }
   const color = (k) => {
-    const cols = state.config?.source_colors || ["#3ecf8e"];
+    const cols = laneColors();
     return cols[((k % cols.length) + cols.length) % cols.length];
   };
 
@@ -48,21 +65,20 @@
     setTimeout(() => el.remove(), 4600);
   }
 
-  /* ── Gemini API key ─────────────────────────────────────────────── */
+  /* ── Settings (Gemini API key) ──────────────────────────────────── */
   function applyAiStatus(ai) {
-    const chip = $("#aiChip");
+    const btn = $("#settingsBtn");
     const on = !!(ai && ai.ai_configured);
-    chip.classList.toggle("on", on);
-    chip.classList.toggle("off", !on);
-    $("#aiChipText").textContent = on ? `Gemini · ${ai.gemini_model || "설정됨"}` : "Gemini 키 없음";
-    chip.title = on
-      ? `Gemini 보조 사용 중${ai.api_key_masked ? ` (${ai.api_key_masked})` : ""} · 클릭하여 변경`
-      : "클릭하여 Gemini API 키 설정";
+    if (btn) {
+      btn.title = on
+        ? `설정 · Gemini 사용 중${ai.api_key_masked ? ` (${ai.api_key_masked})` : ""}`
+        : "설정 · Gemini 키 없음";
+    }
     const useAi = $("#useAi");
     if (useAi) useAi.disabled = !on;
   }
 
-  function openKeyDialog() {
+  function openSettingsDialog() {
     const ai = state.ai || {};
     const status = $("#keyStatus");
     status.textContent = ai.ai_configured
@@ -70,7 +86,7 @@
       : "아직 설정되지 않았습니다.";
     status.className = "dialog-status";
     $("#keyInput").value = "";
-    const dlg = $("#keyDialog");
+    const dlg = $("#settingsDialog");
     if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
     setTimeout(() => $("#keyInput").focus(), 30);
   }
@@ -89,7 +105,7 @@
       });
       state.ai = { ...state.ai, ...res };
       applyAiStatus(state.ai);
-      $("#keyDialog").close();
+      $("#settingsDialog").close();
       if (clear) toast("Gemini 키를 지웠습니다", "ok");
       else toast(res.verified === false ? "키를 저장했습니다 (확인 실패)" : "Gemini 키를 저장했습니다", "ok");
     } catch (err) {
@@ -98,6 +114,67 @@
     } finally {
       btn.disabled = false;
     }
+  }
+
+  /* ── Theme (dark / light / auto) ────────────────────────────────── */
+  const THEME_KEY = "pianosync-theme";
+
+  function resolvedTheme(pref) {
+    if (pref === "light" || pref === "dark") return pref;
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  }
+
+  function updateThemeControl(pref) {
+    $$("#themeToggle [data-theme-pref]").forEach((b) => {
+      const on = b.dataset.themePref === pref;
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+
+  function applyTheme(pref, { persist = false } = {}) {
+    const resolved = resolvedTheme(pref);
+    document.documentElement.dataset.theme = resolved;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", resolved === "light" ? "#f7f8fa" : "#0a0b0d");
+    state.theme = pref;
+    updateThemeControl(pref);
+    if (persist) { try { localStorage.setItem(THEME_KEY, pref); } catch (_) {} }
+    if (state.wave && state.wave.ready) drawWave();
+  }
+
+  function initTheme() {
+    let pref = "auto";
+    try { pref = localStorage.getItem(THEME_KEY) || "auto"; } catch (_) {}
+    applyTheme(pref);
+    if (window.matchMedia) {
+      const mq = window.matchMedia("(prefers-color-scheme: light)");
+      const onChange = () => { if (state.theme === "auto") applyTheme("auto"); };
+      if (mq.addEventListener) mq.addEventListener("change", onChange); else mq.addListener(onChange);
+    }
+    const reapply = () => { if (state.theme === "auto") applyTheme("auto"); };
+    document.addEventListener("visibilitychange", reapply);
+    window.addEventListener("focus", reapply);
+  }
+
+  function wavePalette() {
+    const light = document.documentElement.dataset.theme === "light";
+    if (light) {
+      return {
+        grid: "rgba(20,23,28,.06)", tick: "rgba(20,23,28,.32)", axisText: "rgba(20,23,28,.55)",
+        axisLine: "rgba(20,23,28,.12)", laneSep: "rgba(20,23,28,.08)",
+        confFill: "rgba(20,23,28,.06)", confLine: "rgba(20,23,28,.35)", confText: "rgba(20,23,28,.5)",
+        bandStroke: "rgba(20,23,28,.14)", playhead: "rgba(20,23,28,.85)", playheadFill: "#14171c",
+        badgeText: "#ffffff",
+      };
+    }
+    return {
+      grid: "rgba(231,233,236,.055)", tick: "rgba(231,233,236,.28)", axisText: "rgba(231,233,236,.34)",
+      axisLine: "rgba(231,233,236,.1)", laneSep: "rgba(231,233,236,.07)",
+      confFill: "rgba(231,233,236,.06)", confLine: "rgba(231,233,236,.35)", confText: "rgba(231,233,236,.4)",
+      bandStroke: "rgba(231,233,236,.12)", playhead: "rgba(231,233,236,.85)", playheadFill: "#e7e9ec",
+      badgeText: "#0a0b0d",
+    };
   }
 
   async function api(path, options) {
@@ -135,7 +212,14 @@
     fillSelect($("#mode"), c.mode, c.defaults.mode);
     fillSelect($("#effect"), c.effect, c.defaults.effect);
     fillSelect($("#audioMode"), c.audio_mode, c.defaults.audio_mode);
-    fillSelect($("#resolution"), c.resolution, "1920x1080");
+    fillSelect($("#resolution"), c.resolution, c.defaults.size || "original");
+    fillSelect($("#overlayPosition"), c.overlay_position, c.defaults.overlay_position);
+    fillSelect($("#overlaySize"), c.overlay_size, c.defaults.overlay_size);
+    fillSelect($("#overlayColor"), c.overlay_color, c.defaults.overlay_color);
+    fillSelect($("#overlayDuration"), c.overlay_duration || [], c.defaults.overlay_duration || "fixed");
+    fillSelect($("#overlayFont"), c.overlay_fonts || [], c.defaults.overlay_font || "");
+    initOverlayFontSelection(c.defaults.overlay_font || "");
+    applyOverlayTextPreview();
     $("#interval").value = c.defaults.interval_seconds;
     $("#crf").value = c.defaults.crf;
     $("#crfVal").textContent = c.defaults.crf;
@@ -143,12 +227,81 @@
     state.ai = c.defaults;
     applyAiStatus(state.ai);
 
+    initTheme();
     wireEvents();
     renderSources();
+    updateOverlayCount();
+    if (document.fonts && document.fonts.ready) {
+      try { await document.fonts.ready; } catch (_) { /* offline / blocked CDN */ }
+    }
+    if (document.fonts && document.fonts.addEventListener) {
+      document.fonts.addEventListener("loadingdone", () => {
+        if (state.wave && state.wave.ready) drawWave();
+      });
+    }
+    setWaveEmpty(true);
     resizeWave();
     window.addEventListener("resize", resizeWave);
     registerServiceWorker();
+    initInstallBanner();
     await restore();
+  }
+
+  let deferredInstallPrompt = null;
+
+  function isStandaloneDisplay() {
+    return (
+      window.matchMedia("(display-mode: standalone)").matches
+      || window.navigator.standalone === true
+    );
+  }
+
+  function initInstallBanner() {
+    const banner = $("#installBanner");
+    const text = $("#installBannerText");
+    const action = $("#installBannerAction");
+    const dismiss = $("#installBannerDismiss");
+    if (!banner || !text || !dismiss) return;
+    if (isStandaloneDisplay() || localStorage.getItem("pianosync-install-dismiss") === "1") return;
+
+    const isIos = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isAndroid = /Android/i.test(navigator.userAgent);
+
+    window.addEventListener("beforeinstallprompt", (ev) => {
+      ev.preventDefault();
+      deferredInstallPrompt = ev;
+      if (action) {
+        action.hidden = false;
+        action.textContent = "앱 설치";
+      }
+      text.innerHTML = "<b>Android</b> · Chrome 메뉴 또는 아래 버튼으로 홈 화면에 설치할 수 있습니다.";
+      banner.hidden = false;
+    });
+
+    if (isIos && !deferredInstallPrompt) {
+      text.innerHTML = "<b>iPhone</b> · Safari에서 <b>공유(↑)</b> → <b>홈 화면에 추가</b>하면 앱처럼 실행됩니다. "
+        + "분석·렌더는 이 Wi‑Fi에 연결된 Mac/PC에서 돌아갑니다.";
+      banner.hidden = false;
+    } else if (isAndroid && !deferredInstallPrompt) {
+      text.innerHTML = "<b>Android</b> · Chrome <b>⋮</b> 메뉴 → <b>앱 설치</b> 또는 <b>홈 화면에 추가</b>. "
+        + "서버는 같은 Wi‑Fi의 Mac/PC에서 실행 중이어야 합니다.";
+      banner.hidden = false;
+    }
+
+    dismiss.addEventListener("click", () => {
+      localStorage.setItem("pianosync-install-dismiss", "1");
+      banner.hidden = true;
+    });
+
+    if (action) {
+      action.addEventListener("click", async () => {
+        if (!deferredInstallPrompt) return;
+        deferredInstallPrompt.prompt();
+        try { await deferredInstallPrompt.userChoice; } catch (_) { /* user dismissed */ }
+        deferredInstallPrompt = null;
+        banner.hidden = true;
+      });
+    }
   }
 
   function registerServiceWorker() {
@@ -189,7 +342,7 @@
           <span class="source-meta">${src.uploading ? "업로드 중…" : src.size ? formatBytes(src.size) : ""}${i === 0 ? " · 기준" : ""}</span>
         </div>
         <div class="source-tags">${i === 0 ? `<span class="tag tag-ok">기준</span>` : ""}</div>
-        <button class="source-remove" type="button" title="제거" ${src.uploading ? "disabled" : ""}>${icon("x")}</button>
+        <button class="source-remove" type="button" title="제거" aria-label="소스 제거" ${src.uploading ? "disabled" : ""}>${icon("x")}</button>
         <div class="source-progress"><i></i></div>`;
       el.querySelector(".source-remove").addEventListener("click", () => removeSource(src.id));
       list.appendChild(el);
@@ -215,6 +368,11 @@
       el.className = "rail-src";
       el.innerHTML = `<span class="swatch" style="background:${color(i)}"></span>
         <span class="name">${String.fromCharCode(65 + i)} · ${esc(s.name)}</span>`;
+      el.setAttribute("role", "button");
+      el.tabIndex = 0;
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setStep(1); }
+      });
       el.addEventListener("click", () => setStep(1));
       box.appendChild(el);
     });
@@ -398,7 +556,13 @@
   const PAD_T = 14, PAD_B = 26, PAD_L = 46, PAD_R = 16;
   const BAND_H = 20, GAP = 10, SRC_H = 46, ALIGN_H = 92;
 
-  function monoFont() { return getComputedStyle(document.body).getPropertyValue("--mono"); }
+  function cssFont(token) {
+    return getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+  }
+  function monoFont() { return cssFont("--mono"); }
+  function sansFont() { return cssFont("--sans"); }
+  /** Canvas labels: Hangul needs the sans stack; timecodes stay mono. */
+  function canvasLabelFont(text) { return HANGUL_RE.test(text) ? sansFont() : monoFont(); }
 
   function sourceCount() {
     if (state.wave && state.wave.envs && state.wave.envs.length) return state.wave.envs.length;
@@ -437,11 +601,19 @@
     drawWave();
   }
 
+  function setWaveEmpty(isEmpty) {
+    const wrap = document.querySelector(".wave-wrap");
+    if (wrap) wrap.classList.toggle("is-empty", !!isEmpty);
+    const empty = $("#waveEmpty");
+    if (empty) empty.hidden = !isEmpty;
+  }
+
   async function loadWaveform() {
     try {
       state.wave = await api("/api/waveform");
-      if (state.wave && state.wave.ready) { $("#waveEmpty").hidden = true; resizeWave(); }
-    } catch (_) { state.wave = null; }
+      if (state.wave && state.wave.ready) { setWaveEmpty(false); resizeWave(); }
+      else setWaveEmpty(true);
+    } catch (_) { state.wave = null; setWaveEmpty(true); }
     renderLegend();
     drawWave();
   }
@@ -460,11 +632,12 @@
     const canvas = $("#wave");
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
+    const p = wavePalette();
     const g = waveGeom();
     ctx.clearRect(0, 0, g.W, g.H);
-    drawAxes(ctx, g);
     const w = state.wave;
-    if (!w || !w.ready) { drawPlayhead(ctx, g); return; }
+    if (!w || !w.ready) return;
+    drawAxes(ctx, g);
 
     // low-confidence shading over the reference (A) lane
     const refLane = g.lanes[0];
@@ -480,17 +653,17 @@
       const lane = g.lanes[k];
       if (!lane) return;
       if (k > 0) {
-        ctx.strokeStyle = "rgba(231,233,236,.07)";
+        ctx.strokeStyle = p.laneSep;
         ctx.beginPath(); ctx.moveTo(g.padL, lane.top + .5); ctx.lineTo(g.padL + g.innerW, lane.top + .5); ctx.stroke();
       }
       fillLane(ctx, env, g, lane.top, lane.bot, color(env.index), 0.9);
       ctx.fillStyle = hexA(color(env.index), 0.95);
-      ctx.font = "600 11px " + monoFont();
+      ctx.font = "600 11px " + canvasLabelFont(env.label);
       ctx.fillText(env.label, g.padL + 4, lane.top + 13);
     });
 
     // onset ticks along the top of the alignment lane
-    ctx.strokeStyle = "rgba(231,233,236,.28)";
+    ctx.strokeStyle = p.tick;
     ctx.lineWidth = 1;
     ctx.beginPath();
     (w.onsets || []).forEach((t) => { const x = g.xA(t); ctx.moveTo(x, g.alignTop); ctx.lineTo(x, g.alignTop + 5); });
@@ -517,15 +690,15 @@
       for (let i = 0; i < w.confidence.t.length; i++) ctx.lineTo(g.xA(w.confidence.t[i]), g.alignBot - w.confidence.v[i] * span);
       ctx.lineTo(g.xA(w.confidence.t[w.confidence.t.length - 1]), g.alignBot);
       ctx.closePath();
-      ctx.fillStyle = "rgba(231,233,236,.06)"; ctx.fill();
+      ctx.fillStyle = p.confFill; ctx.fill();
       ctx.beginPath();
       for (let i = 0; i < w.confidence.t.length; i++) {
         const x = g.xA(w.confidence.t[i]), y = g.alignBot - w.confidence.v[i] * span;
         i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
       }
-      ctx.strokeStyle = "rgba(231,233,236,.35)"; ctx.lineWidth = 1; ctx.stroke();
-      ctx.fillStyle = "rgba(231,233,236,.4)";
-      ctx.font = "10px " + monoFont();
+      ctx.strokeStyle = p.confLine; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = p.confText;
+      ctx.font = "10px " + sansFont();
       ctx.fillText("신뢰도", g.padL + 4, g.alignTop + 11);
     }
 
@@ -537,12 +710,12 @@
       ctx.fillRect(x0, g.bandTop, Math.max(1, x1 - x0 - 1), g.bandBot - g.bandTop);
       ctx.globalAlpha = 1;
       if (x1 - x0 > 18) {
-        ctx.fillStyle = "#0a0b0d";
-        ctx.font = "600 10px " + monoFont();
+        ctx.fillStyle = p.badgeText;
+        ctx.font = "600 10px " + canvasLabelFont(s.source);
         ctx.fillText(s.source, x0 + 5, g.bandTop + 14);
       }
     });
-    ctx.strokeStyle = "rgba(231,233,236,.12)";
+    ctx.strokeStyle = p.bandStroke;
     ctx.strokeRect(g.padL + .5, g.bandTop + .5, g.innerW - 1, (g.bandBot - g.bandTop) - 1);
 
     // onset snap guide under the cursor
@@ -579,9 +752,10 @@
   }
 
   function drawAxes(ctx, g) {
+    const p = wavePalette();
     ctx.font = "10px " + monoFont();
-    ctx.strokeStyle = "rgba(231,233,236,.055)";
-    ctx.fillStyle = "rgba(231,233,236,.34)";
+    ctx.strokeStyle = p.grid;
+    ctx.fillStyle = p.axisText;
     ctx.lineWidth = 1;
     const step = niceStep(g.aMax);
     const bottom = g.alignBot;
@@ -590,19 +764,20 @@
       ctx.beginPath(); ctx.moveTo(x, g.bandTop); ctx.lineTo(x, bottom); ctx.stroke();
       ctx.fillText(`${t.toFixed(0)}s`, x + 4, g.H - 9);
     }
-    ctx.strokeStyle = "rgba(231,233,236,.1)";
+    ctx.strokeStyle = p.axisLine;
     [g.bandTop, g.bandBot, g.alignTop, g.alignBot, ...g.lanes.map((l) => l.bot)].forEach((y) => {
       ctx.beginPath(); ctx.moveTo(g.padL, y + .5); ctx.lineTo(g.padL + g.innerW, y + .5); ctx.stroke();
     });
   }
 
   function drawPlayhead(ctx, g) {
+    const p = wavePalette();
     if (!state.ready) return;
     const x = g.xA(state.scrub);
-    ctx.strokeStyle = "rgba(231,233,236,.85)";
+    ctx.strokeStyle = p.playhead;
     ctx.lineWidth = 1.2;
     ctx.beginPath(); ctx.moveTo(x, g.bandTop); ctx.lineTo(x, g.alignBot); ctx.stroke();
-    ctx.fillStyle = "#e7e9ec";
+    ctx.fillStyle = p.playheadFill;
     ctx.beginPath(); ctx.moveTo(x, g.bandTop); ctx.lineTo(x + 5, g.bandTop - 7); ctx.lineTo(x - 5, g.bandTop - 7); ctx.closePath(); ctx.fill();
   }
 
@@ -641,41 +816,72 @@
 
   function wireWave() {
     const canvas = $("#wave");
-    let dragging = false, dragMoved = false, dragStartX = 0;
+    let dragging = false, dragMoved = false, dragPointer = null, dragStartX = 0;
+    const DRAG_PX = 4;
 
+    const setReadout = (t, snapped) => {
+      $("#timeReadout").textContent = fmt(t) + (snapped == null ? "" : " ⌁");
+    };
+
+    // Pointer Events cover mouse, touch and pen with one code path. Without
+    // this the timeline was un-scrubbable on touch: `touch-action` suppresses
+    // the synthesized mouse events a drag would otherwise produce.
+    const detach = () => {
+      canvas.removeEventListener("pointermove", onDrag);
+      canvas.removeEventListener("pointerup", endDrag);
+      canvas.removeEventListener("pointercancel", cancelDrag);
+      if (dragPointer != null && canvas.hasPointerCapture && canvas.hasPointerCapture(dragPointer)) {
+        try { canvas.releasePointerCapture(dragPointer); } catch (_) {}
+      }
+      dragging = false; dragPointer = null;
+    };
     const onDrag = (ev) => {
-      if (!dragging) return;
-      if (Math.abs(ev.clientX - dragStartX) > 3) dragMoved = true;
-      if (dragMoved) seekTo(waveTimeFromEvent(ev));
+      if (!dragging || ev.pointerId !== dragPointer) return;
+      if (Math.abs(ev.clientX - dragStartX) > DRAG_PX) dragMoved = true;
+      if (!dragMoved) return;
+      const t = waveTimeFromEvent(ev);
+      seekTo(t);
+      setReadout(t, null);
     };
     const endDrag = (ev) => {
-      if (!dragging) return;
-      dragging = false;
-      window.removeEventListener("mousemove", onDrag);
-      window.removeEventListener("mouseup", endDrag);
-      if (!dragMoved) {
+      if (!dragging || ev.pointerId !== dragPointer) return;
+      const moved = dragMoved;
+      detach();
+      if (!moved) {
         const snapped = nearestOnset(ev.clientX);
-        seekTo(snapped == null ? waveTimeFromEvent(ev) : snapped);
+        const t = snapped == null ? waveTimeFromEvent(ev) : snapped;
+        seekTo(t);
+        setReadout(t, snapped);
       }
     };
+    const cancelDrag = (ev) => {
+      if (!dragging || ev.pointerId !== dragPointer) return;
+      detach();
+    };
 
-    canvas.addEventListener("mousedown", (ev) => {
+    canvas.addEventListener("pointerdown", (ev) => {
       if (!(state.wave && state.wave.ready)) return;
-      if (ev.button !== 0) return;
-      dragging = true; dragMoved = false; dragStartX = ev.clientX;
+      if (ev.pointerType === "mouse" && ev.button !== 0) return;
+      dragging = true; dragMoved = false;
+      dragPointer = ev.pointerId; dragStartX = ev.clientX;
       if (state.hoverSnap != null) { state.hoverSnap = null; drawWave(); }
-      window.addEventListener("mousemove", onDrag);
-      window.addEventListener("mouseup", endDrag);
+      try { canvas.setPointerCapture(ev.pointerId); } catch (_) {}
+      canvas.addEventListener("pointermove", onDrag);
+      canvas.addEventListener("pointerup", endDrag);
+      canvas.addEventListener("pointercancel", cancelDrag);
       ev.preventDefault();
     });
-    canvas.addEventListener("mousemove", (ev) => {
-      if (!(state.wave && state.wave.ready) || dragging) return;
+
+    // Hover readout is a mouse-only affordance (touch reports the time while
+    // dragging and on tap instead).
+    canvas.addEventListener("pointermove", (ev) => {
+      if (ev.pointerType !== "mouse" || dragging) return;
+      if (!(state.wave && state.wave.ready)) return;
       const snapped = nearestOnset(ev.clientX);
       if (state.hoverSnap !== snapped) { state.hoverSnap = snapped; drawWave(); }
-      const t = snapped == null ? waveTimeFromEvent(ev) : snapped;
-      $("#timeReadout").textContent = fmt(t) + (snapped == null ? "" : " ⌁");
+      setReadout(snapped == null ? waveTimeFromEvent(ev) : snapped, snapped);
     });
-    canvas.addEventListener("mouseleave", () => {
+    canvas.addEventListener("pointerleave", () => {
       if (state.hoverSnap != null) { state.hoverSnap = null; drawWave(); }
     });
   }
@@ -722,7 +928,15 @@
         <span class="idx" style="background:${color(s.source_index)}">${s.source}</span>
         <div><div class="meta"><b>${fmt(s.a_start)} – ${fmt(s.a_end)}</b> · in ${fmt(s.src_start ?? s.b_start)}</div>
         <div class="reason">${esc(s.reason)}</div></div>
-        <div class="confbar" title="신뢰도 ${conf}%"><i style="width:${conf}%;background:${c}"></i></div>`;
+        <div class="conf" title="신뢰도 ${conf}%">
+          <div class="confbar"><i style="width:${conf}%;background:${c}"></i></div>
+          <span class="conf-pct">${conf}%</span>
+        </div>`;
+      el.setAttribute("role", "button");
+      el.tabIndex = 0;
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); seekTo(s.a_start); }
+      });
       el.addEventListener("click", () => seekTo(s.a_start));
       list.appendChild(el);
     });
@@ -767,7 +981,6 @@
   }
 
   async function runRender() {
-    const [w, h] = ($("#resolution").value || "1920x1080").split("x").map(Number);
     $("#renderProg").hidden = false;
     setRenderProgress("렌더링을 준비하는 중…", 0);
     setStatus("busy", "렌더링 중…", 0);
@@ -783,7 +996,17 @@
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           filename: $("#filename").value,
-          width: w, height: h,
+          // A preset id ("original" = source resolution/orientation, or e.g.
+          // "1080x1920" for vertical) so the server resolves the final size.
+          size: $("#resolution").value,
+          // Empty text disables the caption overlay entirely.
+          overlay_text: $("#overlayText").value,
+          overlay_position: $("#overlayPosition").value,
+          overlay_size: $("#overlaySize").value,
+          overlay_color: $("#overlayColor").value,
+          // "__custom__" from the menu means "use the path in the text field".
+          overlay_font: selectedOverlayFont(),
+          overlay_duration: $("#overlayDuration").value,
           fps: Number($("#fps").value) || 30,
           crf: Number($("#crf").value),
           effect: $("#effect").value,
@@ -837,13 +1060,117 @@
   }
 
   /* ── events ──────────────────────────────────────────────────────── */
+  function updateOverlayCount() {
+    const badge = $("#overlayCount");
+    if (!badge) return;
+    badge.textContent = `${overlayTextLength()} / 200`;
+  }
+
+  function overlayTextLength() {
+    const el = $("#overlayText");
+    return el ? el.value.length : 0;
+  }
+
+  const OVERLAY_PREVIEW_FACE = "PianosyncOverlayPreview";
+  let overlayPreviewLoadedPath = null;
+  let overlayPreviewPathTimer = null;
+
+  function initOverlayFontSelection(selected) {
+    const select = $("#overlayFont");
+    const pathInput = $("#overlayFontPath");
+    if (!select || !selected) {
+      updateFontPathVisibility();
+      return;
+    }
+    const known = Array.from(select.options).some((o) => o.value === selected);
+    if (!known) {
+      select.value = FONT_CUSTOM;
+      if (pathInput) pathInput.value = selected;
+    }
+    updateFontPathVisibility();
+  }
+
+  function updateFontPathVisibility() {
+    const select = $("#overlayFont");
+    const row = $("#overlayFontPathRow");
+    if (!select || !row) return;
+    row.hidden = $("#overlayFont").value !== FONT_CUSTOM;
+    applyOverlayTextPreview();
+  }
+
+  function isOverlayFontPath(value) {
+    return /[/\\]/.test(value) || /\.(ttf|ttc|otf|otc)$/i.test(value);
+  }
+
+  function overlayPreviewFamilyStack(family) {
+    const name = (family || "").trim();
+    if (!name) return sansFont();
+    return `"${name.replace(/"/g, "")}", ${sansFont()}`;
+  }
+
+  async function ensureOverlayPreviewFontFile(path) {
+    if (overlayPreviewLoadedPath === path) return;
+    const url = `/api/overlay-font?path=${encodeURIComponent(path)}`;
+    const face = new FontFace(OVERLAY_PREVIEW_FACE, `url(${url})`);
+    await face.load();
+    document.fonts.add(face);
+    overlayPreviewLoadedPath = path;
+  }
+
+  async function applyOverlayTextPreview() {
+    const ta = $("#overlayText");
+    const select = $("#overlayFont");
+    if (!ta) return;
+    ta.classList.remove("overlay-font-preview-failed");
+    delete ta.dataset.overlayPreviewNote;
+
+    if (select && select.value === FONT_CUSTOM) {
+      const path = ($("#overlayFontPath").value || "").trim();
+      if (!path) {
+        ta.style.fontFamily = sansFont();
+        return;
+      }
+      try {
+        await ensureOverlayPreviewFontFile(path);
+        ta.style.fontFamily = `"${OVERLAY_PREVIEW_FACE}", ${sansFont()}`;
+      } catch (_) {
+        ta.style.fontFamily = sansFont();
+        ta.classList.add("overlay-font-preview-failed");
+        ta.dataset.overlayPreviewNote = "선택한 글꼴 파일을 미리보기에 불러오지 못했습니다. 렌더 시 경로를 다시 확인하세요.";
+      }
+      return;
+    }
+
+    const choice = select ? select.value : "";
+    if (!choice) {
+      const family = (state.config && state.config.defaults && state.config.defaults.overlay_font_preview_family) || "";
+      ta.style.fontFamily = overlayPreviewFamilyStack(family);
+      return;
+    }
+
+    ta.style.fontFamily = overlayPreviewFamilyStack(choice);
+  }
+
+  function scheduleOverlayPreviewFromPath() {
+    clearTimeout(overlayPreviewPathTimer);
+    overlayPreviewPathTimer = setTimeout(() => { applyOverlayTextPreview(); }, 280);
+  }
+
+  function selectedOverlayFont() {
+    const el = $("#overlayFont");
+    if (!el || el.value !== FONT_CUSTOM) return $("#overlayFont").value;
+    return ($("#overlayFontPath").value || "").trim();
+  }
+
   function wireEvents() {
     $$(".step").forEach((el) => el.addEventListener("click", () => setStep(el.dataset.step)));
     $("#analyzeBtn").addEventListener("click", runAnalyze);
-    $("#aiChip").addEventListener("click", openKeyDialog);
-    $("#keyForm").addEventListener("submit", (e) => { e.preventDefault(); submitApiKey($("#keyInput").value.trim()); });
-    $("#keyCancelBtn").addEventListener("click", () => $("#keyDialog").close());
+    $("#settingsBtn").addEventListener("click", openSettingsDialog);
+    $("#settingsForm").addEventListener("submit", (e) => { e.preventDefault(); submitApiKey($("#keyInput").value.trim()); });
+    $("#keyCancelBtn").addEventListener("click", () => $("#settingsDialog").close());
     $("#keyClearBtn").addEventListener("click", () => submitApiKey("", { clear: true }));
+    $$("#themeToggle [data-theme-pref]").forEach((b) =>
+      b.addEventListener("click", () => applyTheme(b.dataset.themePref, { persist: true })));
     $("#addSourceBtn").addEventListener("click", () => $("#hiddenFile").click());
     $("#hiddenFile").addEventListener("change", (e) => { if (e.target.files.length) addFiles(Array.from(e.target.files)); e.target.value = ""; });
 
@@ -876,6 +1203,9 @@
     });
 
     $("#renderBtn").addEventListener("click", runRender);
+    $("#overlayText").addEventListener("input", updateOverlayCount);
+    $("#overlayFont").addEventListener("change", updateFontPathVisibility);
+    $("#overlayFontPath").addEventListener("input", scheduleOverlayPreviewFromPath);
     $("#crf").addEventListener("input", (e) => { $("#crfVal").textContent = e.target.value; });
 
     // ← / → move the playhead (10ms, Shift = 100ms)

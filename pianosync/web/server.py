@@ -23,12 +23,17 @@ from ..config import DEFAULT_GEMINI_MODEL, get_api_key, set_api_key
 from ..core.analysis import MAX_TRACKS
 from ..errors import PianoSyncError
 from ..video.frames import extract_frame_png
+from ..video.overlay import default_preview_family, font_choices, servable_font_path
 from .jobs import JobManager
 from .workspace import Workspace
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 HOME = os.path.expanduser("~")
 DEFAULT_ROOT = os.path.join(HOME, ".pianosync", "web")
+
+#: Font-menu value that reveals a "font file path" input in the UI; the client
+#: resolves it to the path before sending the render request.
+FONT_CUSTOM = "__custom__"
 
 
 def _mask_key(key: Optional[str]) -> Optional[str]:
@@ -101,10 +106,14 @@ CONFIG = {
         {"value": "none", "label": "오디오 없음"},
     ],
     "resolution": [
-        {"value": "1920x1080", "label": "1080p (1920×1080)"},
-        {"value": "1280x720", "label": "720p (1280×720)"},
-        {"value": "854x480", "label": "480p (854×480)"},
-        {"value": "1080x1920", "label": "세로 1080×1920"},
+        {"value": "original", "label": "원본 해상도 (소스 그대로)"},
+        {"value": "1080x1920", "label": "세로 9:16 · 1080×1920 (Shorts·릴스·틱톡)"},
+        {"value": "720x1280", "label": "세로 9:16 · 720×1280"},
+        {"value": "1920x1080", "label": "가로 16:9 · 1920×1080"},
+        {"value": "1280x720", "label": "가로 16:9 · 1280×720"},
+        {"value": "3840x2160", "label": "가로 16:9 · 3840×2160 (4K)"},
+        {"value": "1080x1080", "label": "정사각 1:1 · 1080×1080 (피드)"},
+        {"value": "1080x1350", "label": "세로 4:5 · 1080×1350 (피드)"},
     ],
     "preset": [
         {"value": "ultrafast", "label": "ultrafast"},
@@ -113,8 +122,35 @@ CONFIG = {
         {"value": "medium", "label": "medium"},
         {"value": "slow", "label": "slow"},
     ],
+    "overlay_position": [
+        {"value": "bottom", "label": "하단"},
+        {"value": "center", "label": "가운데"},
+        {"value": "top", "label": "상단"},
+    ],
+    "overlay_size": [
+        {"value": "small", "label": "작게"},
+        {"value": "medium", "label": "보통"},
+        {"value": "large", "label": "크게"},
+    ],
+    "overlay_color": [
+        {"value": "white", "label": "흰색"},
+        {"value": "black", "label": "검정"},
+    ],
+    "overlay_duration": [
+        {"value": "fixed", "label": "영상 내내"},
+        {"value": "3", "label": "3초 후 사라짐"},
+        {"value": "5", "label": "5초 후 사라짐"},
+        {"value": "10", "label": "10초 후 사라짐"},
+    ],
     "defaults": {
         "interval_seconds": 5.0,
+        "size": "original",
+        "overlay_text": "",
+        "overlay_position": "bottom",
+        "overlay_size": "medium",
+        "overlay_color": "white",
+        "overlay_font": "",
+        "overlay_duration": "fixed",
         "crf": 20,
         "fps": 30,
         "effect": "cut",
@@ -178,10 +214,32 @@ def create_app(
     @app.get("/api/config")
     async def config() -> dict:
         data = dict(CONFIG)
+        # The font list is scanned from the machine, so it is resolved per
+        # request (cached inside ``overlay.font_choices``) instead of at import.
+        data["overlay_fonts"] = [
+            {"value": value, "label": label} for value, label in font_choices()
+        ] + [{"value": FONT_CUSTOM, "label": "직접 지정 (폰트 파일 경로)"}]
         data["defaults"] = dict(CONFIG["defaults"])
         data["defaults"]["ai_configured"] = bool(get_api_key())
         data["defaults"]["api_key_masked"] = _mask_key(get_api_key())
+        data["defaults"]["overlay_font_preview_family"] = default_preview_family()
         return data
+
+    @app.get("/api/overlay-font")
+    async def overlay_font_file(path: str) -> FileResponse:
+        """Serve a local font file for in-browser caption preview (same machine only)."""
+        try:
+            resolved = servable_font_path(path)
+        except PianoSyncError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        ext = os.path.splitext(resolved)[1].lower()
+        media = {
+            ".ttf": "font/ttf",
+            ".otf": "font/otf",
+            ".ttc": "font/collection",
+            ".otc": "font/collection",
+        }.get(ext, "application/octet-stream")
+        return FileResponse(resolved, media_type=media)
 
     @app.get("/api/settings")
     async def read_settings() -> dict:

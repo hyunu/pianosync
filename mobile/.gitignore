@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.DS_Store
+android/app/build/
+android/.gradle/
+ios/App/Pods/
+ios/DerivedData/
+*.jks
+local.properties

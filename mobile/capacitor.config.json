@@ -1,0 +1,15 @@
+{
+  "appId": "studio.pianosync.app",
+  "appName": "Piano Sync",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "ios": {
+    "contentInset": "automatic"
+  }
+}

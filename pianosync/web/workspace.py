@@ -21,10 +21,16 @@ import numpy as np
 from ..ai.gemini import GeminiClient
 from ..audio.confidence import onset_peak_times
 from ..audio.envelope import envelope_from_wav
-from ..config import EFFECTS, AlignmentConfig, OutputConfig, TransitionConfig
+from ..config import EFFECTS, AlignmentConfig, OutputConfig, TransitionConfig, normalize_size
 from ..core.analysis import MAX_TRACKS, AnalysisEngine, Track
 from ..core.transitions import TransitionPlan, generate_transitions, generate_transitions_multi
 from ..errors import GeminiError
+from ..video.overlay import (
+    normalize_color as normalize_overlay_color,
+    normalize_overlay_duration,
+    normalize_position as normalize_overlay_position,
+    normalize_size as normalize_overlay_size,
+)
 from ..video.render import RenderResult, RenderTrack, render_final_video_multi
 
 MAX_WAVE_POINTS = 1600
@@ -209,10 +215,32 @@ class Workspace:
             cfg.path = os.path.join(self.output_dir, name)
         elif not cfg.path:
             cfg.path = os.path.join(self.output_dir, "comparison.mp4")
-        if "width" in s:
-            cfg.width = int(s["width"])
-        if "height" in s:
-            cfg.height = int(s["height"])
+        if s.get("size"):
+            # A named preset ("original", "1080x1920", …) clears any explicit
+            # pixel override so the preset actually takes effect.
+            cfg.size = normalize_size(str(s["size"]))
+            cfg.width = 0
+            cfg.height = 0
+        if s.get("overlay_text") is not None:
+            # Empty text simply turns the overlay off.
+            cfg.overlay_text = str(s.get("overlay_text") or "").strip()
+        if s.get("overlay_position"):
+            cfg.overlay_position = normalize_overlay_position(str(s["overlay_position"]))
+        if s.get("overlay_size"):
+            cfg.overlay_size = normalize_overlay_size(str(s["overlay_size"]))
+        if s.get("overlay_color"):
+            cfg.overlay_color = normalize_overlay_color(str(s["overlay_color"]))
+        if s.get("overlay_font") is not None:
+            # "" = automatic; otherwise a family name or a font file path.
+            cfg.overlay_font = str(s.get("overlay_font") or "").strip()
+        if s.get("overlay_duration") is not None:
+            cfg.overlay_duration = normalize_overlay_duration(str(s.get("overlay_duration")))
+        width = int(s.get("width") or 0)
+        height = int(s.get("height") or 0)
+        if width > 0 and height > 0:  # explicit pixels win (API / desktop)
+            cfg.size = "custom"
+            cfg.width = width
+            cfg.height = height
         if "fps" in s:
             cfg.fps = float(s["fps"])
         if "crf" in s:

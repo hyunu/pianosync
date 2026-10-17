@@ -155,6 +155,9 @@ class WaveformWidget(QWidget):
         dur_b = self._time_at_end(self._env_b) if self._env_b else 0.0
 
         if alignment is None:
+            font = QFont(WAVE["text_font"])
+            font.setPixelSize(13)
+            painter.setFont(font)
             painter.setPen(QPen(_c("text")))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "분석 후 정렬 결과가 여기에 표시됩니다")
             painter.end()

@@ -31,3 +31,9 @@ renders/.gitkeep
 
 # OS
 .DS_Store
+
+# Capacitor mobile shell
+mobile/node_modules/
+mobile/android/app/build/
+mobile/android/.gradle/
+mobile/ios/App/Pods/

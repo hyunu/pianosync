@@ -40,6 +40,8 @@ FFmpeg가 PATH에 없는 경우 `.env`의 `FFMPEG_BIN`/`FFPROBE_BIN`로 경로�
 python run_web.py                 # http://127.0.0.1:8765 자동 안내
 # 또는
 python -m pianosync.web --host 127.0.0.1 --port 8765
+# 같은 Wi‑Fi의 휴대폰에서 접속:
+python -m pianosync.web --host 0.0.0.0 --port 8765
 # 또는 설치형 사용 시
 piano-sync-switcher-web
 ```
@@ -49,8 +51,30 @@ piano-sync-switcher-web
 - 웹 UI는 4단계(입력·분석 → 정렬 편집 → 미리보기 → 출력)로 구성되며, 커스텀 캔버스 파형에서
   클릭 이동 / **Shift-클릭** 앵커 추가 / **우클릭** 앵커 제거를 지원합니다. 파형은 각 연주별
   레인으로, 정렬 근거(매핑 곡선·신뢰도)는 별도 레인으로 표시합니다.
+- 출력 크기의 기본값은 **원본 해상도**로, 기준 영상의 해상도와 방향을 그대로 따릅니다. 세로로 찍은
+  폰 영상이면 결과도 세로(예: 1080×1920)로 나옵니다. 그 외에 16:9 가로(720p/1080p/4K), 세로
+  9:16(1080×1920·720×1280 — 유튜브 Shorts·릴스·틱톡), 정사각 1:1, 세로 4:5 프리셋을 지원합니다.
+  원본과 비율이 다른 프리셋을 고르면 잘라내지 않고 레터박스(검은 여백)로 맞춥니다.
+- 출력 단계의 **영상에 글자 넣기** 카드에서 원하는 글자를 입력하면 영상에 그대로 새겨집니다.
+  위치(상단/가운데/하단)·크기(작게/보통/크게)·색상(흰색/검정)·글꼴을 고를 수 있고, 여러 줄과 자동
+  줄바꿈을 지원합니다. 글자를 비우면 아무것도 넣지 않습니다. 어떤 배경에서도 읽히도록 글자색
+  반대색 외곽선을 함께 그립니다.
+  > 텍스트는 서버에서 Pillow로 투명 PNG를 만들어 FFmpeg `overlay`로 합성합니다. `drawtext`
+  > 필터가 없는 FFmpeg 빌드(예: Homebrew 기본 빌드)에서도 동작합니다.
+- **글꼴** 목록은 이 컴퓨터에 설치된 폰트를 자동으로 스캔해 만듭니다. 한글이 되는 글꼴을 먼저
+  보여주고(예: macOS Apple SD Gothic Neo·AppleGothic·AppleMyungjo·D2Coding), 자주 쓰는 영문
+  글꼴(Helvetica Neue·Arial·Georgia 등 설치된 것만)을 `· 영문` 표시와 함께 뒤에 붙입니다.
+  목록에 없는 폰트를 쓰려면 **직접 지정 (폰트 파일 경로)** 을 고르고 `.ttf`/`.otf`/`.ttc` 파일
+  경로를 입력하거나, `PIANOSYNC_OVERLAY_FONT` 환경변수에 글꼴 이름 또는 파일 경로를 지정하세요
+  (예: `PIANOSYNC_OVERLAY_FONT=AppleGothic`). 한글이 없는 글꼴을 고르고 한글 자막을 넣으면
+  두부(□) 대신 어떤 글자가 문제인지 알려주는 오류가 표시됩니다.
 - 작업 폴더는 `~/.pianosync/web`(업로드/캐시/결과). `PIANOSYNC_WEB_ROOT`로 변경할 수 있습니다.
 - 진행률은 SSE(`/api/jobs/{id}/events`)로 실시간 스트리밍되며 취소를 지원합니다.
+- **iPhone / Android**에서 앱처럼 쓰려면 PWA(홈 화면 추가)를 사용합니다. 휴대폰은 UI만 담당하고
+  FFmpeg 분석·렌더는 Mac/PC에서 `--host 0.0.0.0` 으로 띄운 서버에 접속합니다.
+  자세한 절차·스토어 배포 옵션은 [`docs/mobile-app.md`](docs/mobile-app.md)를 참고하세요.
+- **APK/IPA 설치형 앱** 셸은 [`mobile/`](mobile/) (Capacitor). **폰 단독 분석·렌더** 로드맵은
+  [`docs/mobile-standalone.md`](docs/mobile-standalone.md).
 
 ## Gemini 설정 (선택)
 
@@ -77,6 +101,7 @@ cp .env.example .env
 3. **탭 3 (미리보기)**: A 시간 슬라이더/전환 이동 버튼으로 위치를 바꾸고
    **프레임 새로고침**으로 같은 음악 위치의 A/B 프레임을 나란히 확인합니다.
 4. **탭 4 (출력)**: 저장 경로·해상도·품질·오디오 모드를 설정하고 **최종 영상 생성**.
+   (영상에 글자를 새기는 오버레이는 현재 웹 UI에서 제공합니다.)
 
 ### 전환 모드
 
@@ -127,7 +152,10 @@ pytest
   오디오 조립, 프로젝트 왕복 저장, Gemini(Mocking) 테스트 포함.
 - FFmpeg가 설치되어 있으면 `tests/test_render.py`가 합성 영상으로 실제 인코딩까지 검증합니다.
 - `tests/test_web.py`가 웹 API(업로드→분석→파형/전환/앵커→프레임→렌더→다운로드)를 엔드투엔드로 검증합니다.
-- 현재: **50개 테스트 통과** + 샘플 영상(`samples/`) 기반 데스크톱/웹 엔드투엔드 확인.
+- `tests/test_output_size.py`가 출력 크기 규칙(원본 방향 보존, 프리셋, 홀수 크기 보정, 우선순위)을,
+  `tests/test_overlay.py`가 글자 오버레이(위치·크기·색상·줄바꿈·글꼴 선택, 필터 그래프, 실제 인코딩
+  결과의 픽셀 위치)를 검증합니다.
+- 현재: **86개 테스트 통과** + 샘플 영상(`samples/`) 기반 데스크톱/웹 엔드투엔드 확인.
 
 ## 아키텍처
 
@@ -136,7 +164,7 @@ pianosync/
 ├── audio/       오디오 추출(FFmpeg), 특징 추출, 캐스트, 밴드 DTW, 신뢰도
 ├── core/        분석 오케스트레이션, 정렬 결과/시간 매핑, 전환 지점 생성, 프로그레스
 ├── ai/          Gemini REST 클라이언트(선택, 응답 검증)
-├── video/       오디오 조립, FFmpeg 렌더(컷/블랙페이드/크로스페이드), 프레임 추출
+├── video/       오디오 조립, FFmpeg 렌더(컷/블랙페이드/크로스페이드), 글자 오버레이, 프레임 추출
 ├── project/     JSON 저장/복원, 입력 검증
 ├── ui/          PySide6 데스크톱 UI(5개 영역), 파형 위젯, 백그라운드 워커
 └── web/         FastAPI 서버 + 브라우저 UI(정적 HTML/CSS/JS), SSE 진행률, 작업 관리
@@ -160,7 +188,7 @@ pianosync/
 | POST | `/api/transitions` | 전환 설정 적용/재생성 |
 | POST | `/api/anchors` | 수동 앵커 추가/제거/설정 |
 | GET | `/api/frame` | 미리보기 프레임(PNG) |
-| POST | `/api/render` | 렌더 작업 시작 → `job_id` |
+| POST | `/api/render` | 렌더 작업 시작 → `job_id` (`size` 프리셋, `overlay_text`/`overlay_position`/`overlay_size`/`overlay_color`/`overlay_font`) |
 | GET | `/api/download` | 결과 영상 다운로드 |
 
 ## 알려진 한계

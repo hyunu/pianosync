@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 try:  # pragma: no cover - dotenv is optional at import time
     from dotenv import load_dotenv
@@ -155,13 +155,53 @@ class TransitionConfig:
     audio_mode: str = "A"  # "A" | "B" | "aligned" | "single_A" | "single_B"
 
 
+#: Output size presets: id -> (width, height). ``"original"`` keeps the
+#: reference source resolution *and its orientation*, so a vertical phone
+#: recording stays vertical. The rest cover landscape 16:9 plus the vertical /
+#: square formats used by YouTube Shorts, Reels and Instagram feed posts.
+ORIGINAL_SIZE = "original"
+SIZE_PRESETS: Dict[str, Optional[Tuple[int, int]]] = {
+    ORIGINAL_SIZE: None,          # reference source resolution
+    "1920x1080": (1920, 1080),    # 16:9 landscape (1080p)
+    "1280x720": (1280, 720),      # 16:9 landscape (720p)
+    "3840x2160": (3840, 2160),    # 16:9 landscape (4K)
+    "1080x1920": (1080, 1920),    # 9:16 vertical — Shorts / Reels / TikTok
+    "720x1280": (720, 1280),      # 9:16 vertical (720p)
+    "1080x1080": (1080, 1080),    # 1:1 square — Instagram feed
+    "1080x1350": (1080, 1350),    # 4:5 vertical — Instagram feed
+}
+
+
+def normalize_size(size: Optional[str]) -> str:
+    """Return a valid size preset id, falling back to the source resolution."""
+    return size if size in SIZE_PRESETS else ORIGINAL_SIZE
+
+
 @dataclass
 class OutputConfig:
-    """Controls final rendering."""
+    """Controls final rendering.
+
+    ``size`` selects a preset from :data:`SIZE_PRESETS` (``"original"`` by
+    default). ``width``/``height`` are an explicit pixel override — mainly used
+    by the desktop app and the API — and win when both are non-zero.
+
+    ``overlay_*`` burn a text caption into the video (see
+    :mod:`pianosync.video.overlay`). An empty ``overlay_text`` disables it.
+    """
 
     path: str = ""
-    width: int = 1920
-    height: int = 1080
+    size: str = ORIGINAL_SIZE
+    width: int = 0
+    height: int = 0
+    overlay_text: str = ""
+    overlay_position: str = "bottom"  # "top" | "center" | "bottom"
+    overlay_size: str = "medium"      # "small" | "medium" | "large"
+    overlay_color: str = "white"      # "white" | "black"
+    #: Family name from ``pianosync.video.overlay.list_fonts`` or a font file
+    #: path; empty uses the automatic system default.
+    overlay_font: str = ""
+    #: ``fixed`` = whole video; ``3`` / ``5`` / ``10`` = seconds from t=0.
+    overlay_duration: str = "fixed"
     fps: float = 30.0
     crf: int = 20
     preset: str = "medium"

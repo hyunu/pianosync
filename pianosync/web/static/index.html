@@ -2,20 +2,34 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Piano Sync — 연주 비교 스튜디오</title>
 <meta name="description" content="같은 곡을 연주한 여러 영상을 음악적으로 정렬해 비교 영상으로 만듭니다." />
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon-180.png" />
 <link rel="manifest" href="/manifest.webmanifest" />
 <meta name="theme-color" content="#0a0b0d" />
+<script>
+  (function () {
+    try {
+      var p = localStorage.getItem("pianosync-theme") || "auto";
+      var d = (p === "light" || p === "dark") ? p
+        : (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+      document.documentElement.dataset.theme = d;
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.setAttribute("content", d === "light" ? "#f7f8fa" : "#0a0b0d");
+    } catch (e) {}
+  })();
+</script>
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Piano Sync" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<!-- Pretendard covers Korean *and* Latin in one family, so the UI no longer
+     mixes a Latin webfont with a system Korean face. Falls back to the system
+     stack (SF / Segoe / Roboto + Apple SD Gothic Neo / Malgun Gothic) offline. -->
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
 <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -32,7 +46,9 @@
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></symbol>
     <symbol id="i-film" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="16" rx="2"/><path d="M7 4v16M17 4v16M2.5 9h4.5M2.5 15h4.5M17 9h4.5M17 15h4.5"/></symbol>
     <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1.5 14h5M9.5 8h5M17.5 16h5"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3.5 20 12 6 20.5z"/></symbol>
+    <symbol id="i-type" viewBox="0 0 24 24"><path d="M4 7V4h16v3M12 4v16M8.5 20h7"/></symbol>
     <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 2 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></symbol>
     <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
     <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14 18 8"/><path d="M3.5 18a9 9 0 1 1 17 0"/></symbol>
@@ -51,14 +67,22 @@
       </span>
     </div>
     <div class="appbar-right">
-      <button id="aiChip" class="chip" type="button" title="Gemini 보조 분석 상태">
-        <span class="chip-dot"></span><span id="aiChipText">Gemini</span>
+      <button id="settingsBtn" class="btn btn-ghost btn-icon" type="button" title="설정" aria-label="설정">
+        <svg class="ic"><use href="#i-settings"/></svg>
       </button>
       <button id="newBtn" class="btn btn-ghost" type="button">
         <svg class="ic"><use href="#i-refresh"/></svg><span>새 프로젝트</span>
       </button>
     </div>
   </header>
+
+  <div class="install-banner" id="installBanner" hidden role="region" aria-label="앱 설치 안내">
+    <div class="install-banner-text" id="installBannerText"></div>
+    <div class="install-banner-actions">
+      <button type="button" class="btn btn-primary btn-sm" id="installBannerAction" hidden>앱 설치</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="installBannerDismiss">닫기</button>
+    </div>
+  </div>
 
   <div class="workbench">
 
@@ -146,30 +170,26 @@
           <p class="notice notice-ai" id="aiNote" hidden></p>
         </div>
 
-        <div class="card card-flush">
+        <div class="card card-flush card-timeline">
           <div class="card-title">
             <svg class="ic"><use href="#i-layers"/></svg><span>정렬 타임라인</span>
+            <span class="tag" id="segCount">0</span>
             <div class="wave-tools">
               <span class="readout mono" id="timeReadout">0.00s</span>
             </div>
           </div>
           <div class="wave-wrap">
-            <canvas id="wave" height="320"></canvas>
+            <canvas id="wave" height="320" role="img" aria-label="정렬 타임라인. 좌우로 드래그해 탐색합니다."></canvas>
             <div class="wave-empty" id="waveEmpty">
               <svg class="ic ic-lg"><use href="#i-wave"/></svg>
               <span>분석을 실행하면 타임라인이 표시됩니다</span>
             </div>
           </div>
           <div class="legend" id="legend"></div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">
-            <svg class="ic"><use href="#i-layers"/></svg><span>구간</span>
-            <span class="tag" id="segCount">0</span>
+          <div class="timeline-segs" aria-label="전환 구간 목록">
+            <div class="seglist" id="segList"></div>
+            <div class="warnlist" id="warnList"></div>
           </div>
-          <div class="seglist" id="segList"></div>
-          <div class="warnlist" id="warnList"></div>
         </div>
       </section>
 
@@ -191,36 +211,78 @@
             <span id="renderMsg">렌더링 준비 중…</span>
             <b class="render-pct mono" id="renderPct">0%</b>
           </div>
-          <div class="render-progress"><i id="renderBar"></i></div>
+          <div class="render-progress" aria-hidden="true"><i id="renderBar"></i></div>
         </div>
 
         <div class="cols">
-          <div class="card">
-            <div class="card-title"><svg class="ic"><use href="#i-sliders"/></svg><span>전환 설정</span></div>
-            <div class="fieldgrid">
-              <label class="field"><span class="field-label">모드</span><select id="mode"></select></label>
-              <label class="field"><span class="field-label">효과</span><select id="effect"></select></label>
-              <label class="field"><span class="field-label">오디오</span><select id="audioMode"></select></label>
-              <label class="field"><span class="field-label">시작 영상</span><select id="startWith"></select></label>
-              <label class="field"><span class="field-label">전환 주기 (초)</span><input type="number" id="interval" value="5" min="1" max="60" step="0.5" /></label>
-            </div>
-            <label class="switch switch-row">
-              <input type="checkbox" id="snap" checked /><span class="track"></span>
-              <span class="switch-text">음악적 온셋에 맞춰 전환</span>
-            </label>
-          </div>
-          <div class="card">
-            <div class="card-title"><svg class="ic"><use href="#i-film"/></svg><span>출력 설정</span></div>
-            <div class="fieldgrid">
-              <label class="field"><span class="field-label">해상도</span><select id="resolution"></select></label>
-              <label class="field"><span class="field-label">FPS</span><input type="number" id="fps" value="30" min="15" max="60" step="1" /></label>
-              <label class="field field-wide">
-                <span class="field-label">품질 (CRF) <b class="mono" id="crfVal">20</b></span>
-                <input type="range" id="crf" min="14" max="28" value="20" />
+          <details class="card card-collapsible">
+            <summary class="card-title">
+              <svg class="ic" aria-hidden="true"><use href="#i-sliders"/></svg>
+              <span>전환 설정</span>
+              <span class="collapse-chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="card-collapsible-body">
+              <div class="fieldgrid">
+                <label class="field"><span class="field-label">모드</span><select id="mode"></select></label>
+                <label class="field"><span class="field-label">효과</span><select id="effect"></select></label>
+                <label class="field"><span class="field-label">오디오</span><select id="audioMode"></select></label>
+                <label class="field"><span class="field-label">시작 영상</span><select id="startWith"></select></label>
+                <label class="field"><span class="field-label">전환 주기 (초)</span><input type="number" id="interval" value="5" min="1" max="60" step="0.5" /></label>
+              </div>
+              <label class="switch switch-row">
+                <input type="checkbox" id="snap" checked /><span class="track"></span>
+                <span class="switch-text">음악적 온셋에 맞춰 전환</span>
               </label>
-              <label class="field field-wide"><span class="field-label">파일 이름</span><input type="text" id="filename" value="comparison.mp4" /></label>
             </div>
-          </div>
+          </details>
+          <details class="card card-collapsible">
+            <summary class="card-title">
+              <svg class="ic" aria-hidden="true"><use href="#i-film"/></svg>
+              <span>출력 설정</span>
+              <span class="hint">세로 9:16 · 1:1 지원</span>
+              <span class="collapse-chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="card-collapsible-body">
+              <div class="fieldgrid">
+                <label class="field"><span class="field-label">출력 크기</span><select id="resolution"></select></label>
+                <label class="field"><span class="field-label">FPS</span><input type="number" id="fps" value="30" min="15" max="60" step="1" /></label>
+                <label class="field field-wide">
+                  <span class="field-label">품질 (CRF) <b class="mono" id="crfVal">20</b></span>
+                  <input type="range" id="crf" min="14" max="28" value="20" />
+                </label>
+                <label class="field field-wide"><span class="field-label">파일 이름</span><input type="text" id="filename" value="comparison.mp4" /></label>
+              </div>
+            </div>
+          </details>
+
+          <details class="card card-collapsible card-collapsible-wide">
+            <summary class="card-title">
+              <svg class="ic" aria-hidden="true"><use href="#i-type"/></svg>
+              <span>영상에 글자 넣기</span>
+              <span class="hint">비우면 넣지 않음</span>
+              <span class="collapse-chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="card-collapsible-body">
+              <div class="fieldgrid">
+                <label class="field field-wide">
+                  <span class="field-label">글자 <b id="overlayCount" class="mono">0</b></span>
+                  <textarea id="overlayText" rows="2" maxlength="200" placeholder="예: 2026 봄 연주회 · 1악장"></textarea>
+                </label>
+                <label class="field field-wide"><span class="field-label">글꼴</span><select id="overlayFont"></select></label>
+                <label class="field field-wide" id="overlayFontPathRow" hidden>
+                  <span class="field-label">글꼴 파일 경로</span>
+                  <input type="text" id="overlayFontPath" placeholder="/Users/이름/Library/Fonts/MyFont.ttf" autocomplete="off" spellcheck="false" />
+                </label>
+              </div>
+              <div class="fieldgrid fieldgrid-overlay-meta">
+                <label class="field"><span class="field-label">위치</span><select id="overlayPosition"></select></label>
+                <label class="field"><span class="field-label">크기</span><select id="overlaySize"></select></label>
+                <label class="field"><span class="field-label">색상</span><select id="overlayColor"></select></label>
+                <label class="field"><span class="field-label">표시 시간</span><select id="overlayDuration"></select></label>
+              </div>
+              <p class="field-note">글꼴을 바꾸면 위 입력창에 바로 같은 서체가 적용됩니다(이 PC에 설치·허용된 글꼴만). <strong>표시 시간</strong>은 출력 영상 기준 0초부터이며, 「3·5·10초 후 사라짐」은 그때부터 자막이 없어집니다. 여러 줄은 그대로 줄이 나뉘고, 길면 자동으로 줄바꿈됩니다. 최종 영상에는 외곽선이 함께 그려집니다.</p>
+            </div>
+          </details>
         </div>
 
         <div class="card">
@@ -252,28 +314,40 @@
       <span class="status-item"><svg class="ic"><use href="#i-layers"/></svg><span id="statusSegs">—</span></span>
       <span class="status-item"><svg class="ic"><use href="#i-gauge"/></svg><span id="statusConf">—</span></span>
     </div>
-    <div class="status-progress" id="statusProgress" hidden><i id="statusBar"></i></div>
+    <div class="status-progress" id="statusProgress" hidden aria-hidden="true"><i id="statusBar"></i></div>
   </footer>
 </div>
 
-<div class="toasts" id="toasts"></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
-<dialog id="keyDialog" class="dialog" aria-labelledby="keyDialogTitle">
-  <form id="keyForm" method="dialog">
+<dialog id="settingsDialog" class="dialog" aria-labelledby="settingsTitle">
+  <form id="settingsForm" method="dialog">
     <div class="dialog-head">
-      <svg class="ic"><use href="#i-sparkles"/></svg>
-      <b id="keyDialogTitle">Gemini API 키</b>
+      <svg class="ic"><use href="#i-settings"/></svg>
+      <b id="settingsTitle">설정</b>
     </div>
-    <p class="dialog-desc">같은 곡인지 보조 확인(선택)에 사용됩니다. 키는 이 기기의 서버에만 저장되며(파일 권한 600) 브라우저로 다시 전송되지 않습니다.</p>
-    <label class="field">
-      <span class="field-label">API 키</span>
-      <input type="password" id="keyInput" autocomplete="off" spellcheck="false" placeholder="AIza..." />
-    </label>
-    <p class="dialog-status" id="keyStatus"></p>
+    <div class="dialog-section">
+      <div class="dialog-section-title">화면 테마</div>
+      <div class="seg-toggle" id="themeToggle" role="group" aria-label="화면 테마">
+        <button type="button" data-theme-pref="auto">자동</button>
+        <button type="button" data-theme-pref="dark">다크</button>
+        <button type="button" data-theme-pref="light">라이트</button>
+      </div>
+      <p class="dialog-desc">자동은 기기의 다크/라이트 설정을 따릅니다.</p>
+    </div>
+    <div class="dialog-section">
+      <div class="dialog-section-title">Gemini API 키</div>
+      <p class="dialog-desc">같은 곡인지 보조 확인(선택)에 사용됩니다. 키는 이 기기의 서버에만 저장되며(파일 권한 600) 브라우저로 다시 전송되지 않습니다.</p>
+      <label class="field">
+        <span class="field-label">API 키</span>
+        <input type="password" id="keyInput" autocomplete="off" spellcheck="false" placeholder="AIza..." />
+      </label>
+      <p class="dialog-status" id="keyStatus"></p>
+    </div>
     <div class="dialog-actions">
-      <button type="button" class="btn btn-ghost" id="keyClearBtn">지우기</button>
+      <button type="button" class="btn btn-ghost" id="keyClearBtn">키 지우기</button>
       <span class="dialog-spacer"></span>
-      <button type="button" class="btn btn-ghost" id="keyCancelBtn">취소</button>
+      <button type="button" class="btn btn-ghost" id="keyCancelBtn">닫기</button>
       <button type="submit" class="btn btn-primary" id="keySaveBtn">저장</button>
     </div>
   </form>

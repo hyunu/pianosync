@@ -32,6 +32,7 @@ from ..core.progress import Progress
 from ..core.transitions import TransitionPlan
 from ..errors import CancelledError, MediaError, PianoSyncError
 from .audiomix import assemble_audio_multi
+from .overlay import overlay_duration_seconds, render_overlay_png
 from .mapping import (
     SegmentTiming,
     plan_segment_timings_multi,
@@ -108,6 +109,18 @@ def _segment_filter(
     return f"[{input_index}:v]" + ",".join(chain) + output_label
 
 
+def _text_overlay_filter(base_label: str, duration_seconds: Optional[float]) -> str:
+    """Composite the pre-rendered caption PNG onto ``base_label`` → ``[vout]``."""
+    if duration_seconds is None:
+        return f"{base_label}[ov]overlay=0:0:format=auto,format=yuv420p[vout]"
+    end = max(0.001, float(duration_seconds))
+    # Commas inside ``between(t,0,end)`` must be escaped in filter syntax.
+    return (
+        f"{base_label}[ov]overlay=0:0:format=auto:"
+        f"enable='between(t\\,0\\,{end:.6f})',format=yuv420p[vout]"
+    )
+
+
 def _build_filter_complex(
     timings: List[SegmentTiming],
     source_durations: Sequence[float],
@@ -116,9 +129,14 @@ def _build_filter_complex(
     fps: float,
     effect: str,
     fade: float,
+    overlay_input_index: Optional[int] = None,
+    overlay_duration_seconds: Optional[float] = None,
 ) -> str:
     parts: List[str] = []
     labels: List[str] = []
+    # When a text overlay is composited afterwards the assembled video is
+    # labelled [vbase]; the overlay step then produces the final [vout].
+    base_label = "[vbase]" if overlay_input_index is not None else "[vout]"
     for n, timing in enumerate(timings):
         input_index = int(getattr(timing, "input_index", 0) or 0)
         source_duration = (
@@ -143,14 +161,14 @@ def _build_filter_complex(
         labels.append(label)
 
     if len(timings) == 1:
-        parts.append(f"{labels[0]}null[vout]")
+        parts.append(f"{labels[0]}null{base_label}")
     elif effect in XFADE_EFFECTS and fade > 0:
         transition = XFADE_TRANSITIONS.get(effect, "fade")
         accumulated = timings[0].out_duration
         current = labels[0]
         for n in range(1, len(timings)):
             offset = max(0.0, accumulated - fade)
-            out_label = "[vout]" if n == len(timings) - 1 else f"[x{n}]"
+            out_label = base_label if n == len(timings) - 1 else f"[x{n}]"
             parts.append(
                 f"{current}{labels[n]}xfade=transition={transition}:duration={fade:.6f}:"
                 f"offset={offset:.6f}{out_label}"
@@ -159,8 +177,12 @@ def _build_filter_complex(
             current = out_label
     else:
         parts.append(
-            "".join(labels) + f"concat=n={len(labels)}:v=1:a=0[vout]"
+            "".join(labels) + f"concat=n={len(labels)}:v=1:a=0{base_label}"
         )
+
+    if overlay_input_index is not None:
+        parts.append(f"[{overlay_input_index}:v]format=rgba[ov]")
+        parts.append(_text_overlay_filter(base_label, overlay_duration_seconds))
     return ";".join(parts)
 
 
@@ -265,12 +287,37 @@ def render_final_video_multi(
     with tempfile.TemporaryDirectory(prefix="pianosync_render_") as tmp:
         video_only = os.path.join(tmp, "video_only.mp4")
         err_path = os.path.join(tmp, "ffmpeg.log")
+
+        overlay_path: Optional[str] = None
+        if output.overlay_text.strip():
+            # Rasterise the caption at the exact output size (see video/overlay.py).
+            overlay_path = render_overlay_png(
+                output.overlay_text,
+                width,
+                height,
+                os.path.join(tmp, "overlay.png"),
+                position=output.overlay_position,
+                size=output.overlay_size,
+                color=output.overlay_color,
+                font=output.overlay_font,
+            )
+
         filter_complex = _build_filter_complex(
-            timings, source_durations, width, height, fps, effect, fade
+            timings,
+            source_durations,
+            width,
+            height,
+            fps,
+            effect,
+            fade,
+            overlay_input_index=len(tracks) if overlay_path else None,
+            overlay_duration_seconds=overlay_duration_seconds(output.overlay_duration),
         )
         cmd = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
         for track in tracks:
             cmd += ["-i", track.media.path]
+        if overlay_path:
+            cmd += ["-i", overlay_path]
         cmd += [
             "-filter_complex",
             filter_complex,
