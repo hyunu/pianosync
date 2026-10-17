@@ -1,21 +1,27 @@
-"""Waveform + alignment + transitions pan, painted with QPainter."""
+"""Waveform + alignment + transitions pan, painted with QPainter.
+
+Rendered as two engraved staves on paper: ink traces, hairline staff rules,
+a time axis ruled at the foot, and cinnabar rehearsal marks at every cut.
+"""
 
 from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
 from ..core.alignment import AlignmentResult
 from ..core.transitions import TransitionPlan
+from .theme import WAVE
 
-_BG = QColor(16, 18, 26)
-_GRID = QColor(60, 66, 82)
-_A_COLOR = QColor(72, 196, 245)
-_B_COLOR = QColor(255, 178, 71)
-_LOW = QColor(240, 90, 90)
+
+def _c(key: str, alpha: Optional[int] = None) -> QColor:
+    color = QColor(WAVE[key])
+    if alpha is not None:
+        color.setAlpha(alpha)
+    return color
 
 
 class WaveformWidget(QWidget):
@@ -72,13 +78,20 @@ class WaveformWidget(QWidget):
     def _lane_bounds(self):
         width = max(1, self.width())
         height = max(1, self.height())
-        padding = 14
-        top = padding
-        mid = height / 2.0
-        bottom = height - padding
-        lane_a = (padding, top, width - 2 * padding, max(20, mid - top - 6))
-        lane_b = (padding, mid + 6, width - 2 * padding, max(20, bottom - mid - 6))
+        x0 = 34
+        x1 = width - 16
+        w = max(10, x1 - x0)
+        top = 12
+        bottom = height - 28
+        gap = 10
+        usable = max(40, bottom - top - gap)
+        lane_h = usable / 2.0
+        lane_a = (x0, top, w, lane_h)
+        lane_b = (x0, top + lane_h + gap, w, lane_h)
         return lane_a, lane_b
+
+    def _axis_y(self) -> float:
+        return max(1, self.height()) - 16
 
     def _draw_lane(self, painter, envelope, color, x0, y0, w, h, duration):
         if not envelope or duration <= 0 or len(envelope[1]) < 2:
@@ -95,7 +108,7 @@ class WaveformWidget(QWidget):
         amp = h * 0.46
         points = []
         # Downsample envelope to a bounded polyline.
-        step = max(1, len(ys) // (w // 3 + 1))
+        step = max(1, len(ys) // (int(w) // 3 + 1))
         for i in range(0, len(xs), step):
             t = xs[i]
             if t < 0 or t > duration:
@@ -112,102 +125,133 @@ class WaveformWidget(QWidget):
         painter.drawPolygon([QPointF(p[0], p[1]) for p in poly])
         painter.restore()
 
+    def _draw_staff_rule(self, painter, x0, y, w, color):
+        pen = QPen(color, 1)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.drawLine(int(x0), int(y), int(x0 + w), int(y))
+
+    def _draw_lane_label(self, painter, letter, x0, y0, h, duration):
+        painter.save()
+        font = QFont(WAVE["display_font"])
+        font.setPixelSize(15)
+        painter.setFont(font)
+        painter.setPen(QPen(_c("text")))
+        painter.drawText(int(x0) - 26, int(y0 + h / 2.0 + 5), letter)
+        painter.restore()
+
     # -- painting ---------------------------------------------------------
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), _BG)
+        painter.fillRect(self.rect(), _c("paper"))
 
         lane_a, lane_b = self._lane_bounds()
         x0, top, w, ha = lane_a
         _, mid0, _, hb = lane_b
+        axis_y = self._axis_y()
         alignment = self._alignment
         dur_a = self._time_at_end(self._env_a) if self._env_a else 0.0
         dur_b = self._time_at_end(self._env_b) if self._env_b else 0.0
 
         if alignment is None:
-            painter.setPen(QPen(QColor(150, 160, 180), 1))
+            painter.setPen(QPen(_c("text")))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "분석 후 정렬 결과가 여기에 표시됩니다")
             painter.end()
             return
 
-        # Segment tint under lane A.
+        # Segment tint as a slim bar along the head of lane A.
         if self._plan:
             for seg in self._plan.segments:
-                sa = seg.a_start
-                ea = seg.a_end
-                color = QColor(72, 196, 245, 26) if seg.source == "A" else QColor(255, 178, 71, 26)
+                sa, ea = seg.a_start, seg.a_end
+                color = _c("a", 46) if seg.source == "A" else _c("b", 46)
                 painter.fillRect(
                     int(x0 + (sa / dur_a) * w),
-                    int(top),
+                    int(top - 6),
                     max(2, int(((ea - sa) / dur_a) * w)),
-                    int(ha),
+                    3,
                     color,
                 )
 
-        # Lanes.
-        self._draw_lane(painter, self._env_a, _A_COLOR, x0, top, w, ha, dur_a)
-        self._draw_lane(painter, self._env_b, _B_COLOR, x0, mid0, w, hb, dur_b)
+        # Staff rules + engraved traces.
+        self._draw_staff_rule(painter, x0, top + ha / 2.0, w, _c("staff"))
+        self._draw_staff_rule(painter, x0, mid0 + hb / 2.0, w, _c("staff"))
+        self._draw_lane(painter, self._env_a, _c("a"), x0, top, w, ha, dur_a)
+        self._draw_lane(painter, self._env_b, _c("b"), x0, mid0, w, hb, dur_b)
+        self._draw_lane_label(painter, "A", x0, top, ha, dur_a)
+        self._draw_lane_label(painter, "B", x0, mid0, hb, dur_b)
 
-        painter.setPen(QPen(_GRID, 1))
-        painter.drawLine(int(x0), int(top + ha), int(x0 + w), int(top + ha))
-        painter.drawLine(int(x0), int(mid0), int(x0 + w), int(mid0))
-
-        # Confidence shading on lane A.
+        # Low-confidence regions: a cinnabar band ruled under lane A.
         conf = alignment.confidence
         times = alignment.feat_a.times
         for (cs, ce) in conf.segments:
             if cs < times.size and ce < times.size:
                 xx0 = int(x0 + (times[cs] / dur_a) * w)
                 xx1 = int(x0 + (times[ce] / dur_a) * w)
-                painter.fillRect(xx0, int(top), max(2, xx1 - xx0), int(ha), _LOW)
+                painter.fillRect(xx0, int(top + ha - 2), max(2, xx1 - xx0), 2, _c("low", 200))
 
-        # Mapping lines from A lane bottom to B lane top.
-        pen = QPen(QColor(220, 220, 240, 42), 1)
+        # Mapping lines between the staves: hairlines.
+        pen = QPen(_c("map", 150), 1)
+        pen.setCosmetic(True)
         painter.setPen(pen)
-        y_a_bottom = top + ha
-        y_b_top = mid0
-        for a_t, b_t in self._map_lines:
-            xa = int(x0 + (a_t / dur_a) * w)
-            xb = int(x0 + (b_t / dur_b) * w)
-            painter.drawLine(xa, int(y_a_bottom) + 2, xb, int(y_b_top) - 2)
+        for (ta, tb) in self._map_lines:
+            xa = int(x0 + (ta / dur_a) * w)
+            xb = int(x0 + (tb / dur_b) * w)
+            painter.drawLine(xa, int(top + ha), xb, int(mid0))
 
-        # Anchors.
-        pen = QPen(QColor(130, 255, 150, 220), 2)
+        # User anchors: cinnabar proof marks at both ends of a rule.
+        pen = QPen(_c("anchor"), 1)
+        pen.setCosmetic(True)
         painter.setPen(pen)
-        for a_t, b_t in self._anchors:
-            xa = int(x0 + (a_t / dur_a) * w)
-            xb = int(x0 + (b_t / dur_b) * w)
-            painter.drawLine(xa, int(y_a_bottom) + 2, xb, int(y_b_top) - 2)
-            painter.drawEllipse(xa - 4, int(top + ha / 2) - 4, 8, 8)
-            painter.drawEllipse(xb - 4, int(mid0 + hb / 2) - 4, 8, 8)
+        painter.setBrush(_c("anchor"))
+        for (ta, tb) in self._anchors:
+            xa = int(x0 + (ta / dur_a) * w)
+            xb = int(x0 + (tb / dur_b) * w)
+            painter.drawLine(xa, int(top + ha), xb, int(mid0))
+            painter.drawRect(xa - 3, int(top + ha / 2.0) - 3, 6, 6)
+            painter.drawRect(xb - 3, int(mid0 + hb / 2.0) - 3, 6, 6)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
 
-        # Transition ticks: on A at a_start, on B at b_start.
-        pen = QPen(QColor(255, 255, 255, 170), 1, Qt.PenStyle.DashLine)
-        painter.setPen(pen)
+        # Transition marks: a rehearsal bar on each staff at the cut.
         if self._plan:
+            pen = QPen(_c("cut"), 2)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
             for seg in self._plan.segments:
                 xa = int(x0 + (seg.a_start / dur_a) * w)
                 xb = int(x0 + (seg.b_start / dur_b) * w)
                 painter.drawLine(xa, int(top), xa, int(top + ha))
                 painter.drawLine(xb, int(mid0), xb, int(mid0 + hb))
+                painter.setBrush(_c("cut"))
+                painter.drawRect(xa - 2, int(top), 5, 5)
+                painter.drawRect(xb - 2, int(mid0), 5, 5)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
 
-        # Current-time cursor.
-        pen = QPen(QColor(255, 90, 90), 2)
+        # Playhead: ink rule with a small head.
+        pen = QPen(_c("playhead"), 1)
+        pen.setCosmetic(True)
         painter.setPen(pen)
-        xc = int(x0 + (self._current_time / dur_a) * w)
-        painter.drawLine(xc, int(top - 4), xc, int(top + ha + 4))
+        px = int(x0 + (self._current_time / dur_a) * w) if dur_a > 0 else int(x0)
+        painter.drawLine(px, int(top), px, int(mid0 + hb))
+        painter.setBrush(_c("playhead"))
+        painter.drawPolygon([QPointF(px - 4, int(top)), QPointF(px + 4, int(top)), QPointF(px, int(top) + 6)])
+        painter.setBrush(Qt.BrushStyle.NoBrush)
 
-        # Axis labels.
-        painter.setPen(QPen(QColor(180, 188, 200), 1))
-        major = 10 if dur_a >= 60 else 5
+        # Time axis ruled at the foot, mono figures.
+        font = QFont(WAVE["mono_font"])
+        font.setPixelSize(11)
+        painter.setFont(font)
+        painter.setPen(QPen(_c("text")))
+        self._draw_staff_rule(painter, x0, axis_y, w, _c("rule"))
+        step = 1.0
+        while dur_a / step > 12:
+            step *= (2.0 if step in (1.0, 5.0) else 2.5)
         if dur_a > 0:
-            step = max(1.0, round((dur_a / major) / 5) * 5)
             t = 0.0
-            while t <= dur_a:
+            while t <= dur_a + 1e-6:
                 xt = int(x0 + (t / dur_a) * w)
-                painter.drawLine(xt, int(top + ha + 3), xt, int(top + ha + 7))
-                painter.drawText(xt - 12, int(top + ha + 22), f"{t:.0f}s")
+                painter.drawLine(xt, int(axis_y), xt, int(axis_y) + 4)
+                painter.drawText(xt - 10, int(axis_y) + 16, f"{t:.0f}s")
                 t += step
         painter.end()
 

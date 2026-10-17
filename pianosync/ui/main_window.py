@@ -6,7 +6,7 @@ import os
 from typing import List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -42,6 +42,7 @@ from ..core.transitions import TransitionPlan, generate_transitions
 from ..errors import MediaError, ProjectError
 from ..project.store import Project, load_project, save_project
 from ..ui import tasks
+from ..ui.theme import SPACE, TOKENS
 from ..ui.waveform import WaveformWidget
 from ..ui.workers import TaskWorker, friendly_error, run_task
 from ..video.frames import extract_frame_png
@@ -79,26 +80,30 @@ class _PreviewPane(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(*[SPACE["4"]] * 4)
+        layout.setSpacing(SPACE["4"])
         self.a_path = ""
         self.b_path = ""
         self.time_map = None
 
         frames = QHBoxLayout()
+        frames.setSpacing(SPACE["4"])
         self.label_a = QLabel("A 프레임")
         self.label_b = QLabel("B 프레임")
         self.label_a.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label_b.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label_a.setMinimumSize(420, 220)
         self.label_b.setMinimumSize(420, 220)
-        self.label_a.setStyleSheet("background:#111; color:#ccc; border:1px solid #333;")
-        self.label_b.setStyleSheet("background:#111; color:#ccc; border:1px solid #333;")
+        self.label_a.setProperty("class", "plate")
+        self.label_b.setProperty("class", "plate")
         frames.addWidget(self.label_a)
         frames.addWidget(self.label_b)
         layout.addLayout(frames)
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 1000)
-        self.time_label = QLabel("A 0.00s / B 0.00s")
+        self.time_label = QLabel("A 0:00.00 / B 0:00.00")
+        self.time_label.setProperty("class", "fig")
         row = QHBoxLayout()
         self.btn_prev = QPushButton("◀ 이전 전환")
         self.btn_next = QPushButton("다음 전환 ▶")
@@ -205,6 +210,9 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._sync_from_project()
 
+        self.setMinimumSize(980, 680)
+        self.resize(1400, 900)
+
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
         tabs = QTabWidget()
@@ -230,25 +238,33 @@ class MainWindow(QMainWindow):
     def _build_input_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setContentsMargins(*[SPACE["5"]] * 4)
+        layout.setSpacing(SPACE["5"])
 
         input_box = QGroupBox("영상 입력")
         hbox = QHBoxLayout(input_box)
+        hbox.setSpacing(SPACE["6"])
         for side in ("a", "b"):
             col = QVBoxLayout()
+            col.setSpacing(SPACE["3"])
             header = QHBoxLayout()
+            side_label = QLabel(f"[{side.upper()}]")
+            side_label.setProperty("class", "strong")
             button = QPushButton(f"영상 {side.upper()} 선택")
             button.clicked.connect(lambda _=False, s=side: self._select_video(s))
-            header.addWidget(QLabel(f"[{side.upper()}]"))
+            header.addWidget(side_label)
             header.addStretch(1)
             header.addWidget(button)
             col.addLayout(header)
             path_label = QLabel("파일을 선택하세요")
             path_label.setWordWrap(True)
             info_label = QLabel("")
+            info_label.setProperty("class", "meta")
+            info_label.setWordWrap(True)
             thumb = QLabel("미리보기 없음")
             thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
             thumb.setMinimumSize(240, 150)
-            thumb.setStyleSheet("background:#111; color:#888; border:1px solid #333;")
+            thumb.setProperty("class", "plate")
             col.addWidget(path_label)
             col.addWidget(info_label)
             col.addWidget(thumb)
@@ -260,6 +276,7 @@ class MainWindow(QMainWindow):
 
         settings_box = QGroupBox("분석 설정 & AI 보조")
         form = QFormLayout(settings_box)
+        form.setSpacing(SPACE["3"])
         self.quality_combo = QComboBox()
         self.quality_combo.addItems(list(QUALITY_MAP.keys()))
         self.quality_combo.setCurrentText("균형")
@@ -271,7 +288,9 @@ class MainWindow(QMainWindow):
         form.addRow("Gemini 모델", self.ai_model_edit)
 
         controls = QHBoxLayout()
+        controls.setSpacing(SPACE["3"])
         self.btn_analyze = QPushButton("▶ 분석 시작")
+        self.btn_analyze.setProperty("class", "primary")
         self.btn_analyze.clicked.connect(self.start_analysis)
         self.btn_cancel = QPushButton("취소")
         self.btn_cancel.setEnabled(False)
@@ -285,6 +304,7 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setTextVisible(True)
         self.status_label = QLabel("아직 분석되지 않았습니다")
+        self.status_label.setProperty("class", "meta")
         layout.addWidget(self.progress)
         layout.addWidget(self.status_label)
 
@@ -298,15 +318,24 @@ class MainWindow(QMainWindow):
     def _build_edit_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setContentsMargins(*[SPACE["4"]] * 4)
+        layout.setSpacing(SPACE["3"])
         splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
 
         self.waveform = WaveformWidget()
+        self.waveform.anchor_requested.connect(self._on_waveform_anchor)
+        self.waveform.anchor_removed.connect(self._on_waveform_anchor_removed)
+        self.waveform.time_selected.connect(self._on_waveform_time_selected)
         splitter.addWidget(self.waveform)
 
         bottom = QWidget()
         vbox = QVBoxLayout(bottom)
+        vbox.setContentsMargins(0, SPACE["4"], 0, 0)
+        vbox.setSpacing(SPACE["4"])
 
         anchor_row = QHBoxLayout()
+        anchor_row.setSpacing(SPACE["3"])
         anchor_row.addWidget(QLabel("현재 위치(A) :"))
         self.current_a_spin = QDoubleSpinBox()
         self.current_a_spin.setRange(0, 60000)
@@ -331,6 +360,7 @@ class MainWindow(QMainWindow):
 
         trans_box = QGroupBox("전환 설정")
         trans_form = QFormLayout(trans_box)
+        trans_form.setSpacing(SPACE["3"])
         self.interval_spin = QDoubleSpinBox()
         self.interval_spin.setRange(0.3, 600)
         self.interval_spin.setDecimals(1)
@@ -356,38 +386,50 @@ class MainWindow(QMainWindow):
         self.effect_dur_spin.setRange(0.1, 3.0)
         self.effect_dur_spin.setDecimals(2)
         self.effect_dur_spin.setValue(0.35)
-        trans_form.addRow("효과 길이 (초)", self.effect_dur_spin)
+        trans_form.addRow("전환 길이 (초)", self.effect_dur_spin)
         self.audio_mode_combo = QComboBox()
         self.audio_mode_combo.addItems(list(AUDIO_MAP.keys()))
         trans_form.addRow("오디오 모드", self.audio_mode_combo)
-        btn_row = QHBoxLayout()
-        self.btn_regenerate = QPushButton("전환 지점 생성/갱신")
+        self.btn_regenerate = QPushButton("전환 생성")
+        self.btn_regenerate.setProperty("class", "primary")
         self.btn_regenerate.clicked.connect(self.regenerate_transitions)
-        btn_row.addWidget(self.btn_regenerate)
-        btn_row.addStretch(1)
-        trans_form.addRow(btn_row)
+        trans_form.addRow("", self.btn_regenerate)
         vbox.addWidget(trans_box)
 
-        vbox.addWidget(QLabel("앵커 (수동 대응 지점) — 파형을 Ctrl-클릭해 추가할 수 있습니다"))
-        self.anchor_table = QTableWidget(0, 2)
-        self.anchor_table.setHorizontalHeaderLabels(["A 시간(초)", "B 시간(초)"])
-        self.anchor_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.btn_remove_anchor = QPushButton("선택 앵커 삭제")
-        self.btn_remove_anchor.clicked.connect(self.remove_selected_anchor)
-        vbox.addWidget(self.anchor_table)
-        vbox.addWidget(self.btn_remove_anchor)
+        tran_section = QLabel("전환 구간")
+        tran_section.setProperty("class", "strong")
+        vbox.addWidget(tran_section)
 
         self.tran_table = QTableWidget(0, 8)
         self.tran_table.setHorizontalHeaderLabels(["#", "표시", "A 시작", "A 끝", "B 시작", "신뢰도", "사유", "수정"])
         self.tran_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        vbox.addWidget(QLabel("전환 구간"))
-        vbox.addWidget(self.tran_table)
+        self.tran_table.verticalHeader().setVisible(False)
+        self.tran_table.setAlternatingRowColors(True)
+        self.tran_table.setShowGrid(False)
+        vbox.addWidget(self.tran_table, 1)
+
         self.warnings_label = QLabel("")
         self.warnings_label.setWordWrap(True)
-        self.warnings_label.setStyleSheet("color:#e8a14b;")
+        self.warnings_label.setProperty("class", "warn")
         vbox.addWidget(self.warnings_label)
 
+        anchor_section = QLabel("앵커 — 수동 대응 지점 (파형에서 Ctrl-클릭 추가, 우클릭 삭제)")
+        anchor_section.setProperty("class", "strong")
+        vbox.addWidget(anchor_section)
+        self.anchor_table = QTableWidget(0, 2)
+        self.anchor_table.setHorizontalHeaderLabels(["A 시간(초)", "B 시간(초)"])
+        self.anchor_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.anchor_table.verticalHeader().setVisible(False)
+        self.anchor_table.setAlternatingRowColors(True)
+        self.anchor_table.setShowGrid(False)
+        vbox.addWidget(self.anchor_table)
+        self.btn_remove_anchor = QPushButton("선택 앵커 삭제")
+        self.btn_remove_anchor.clicked.connect(self.remove_selected_anchor)
+        vbox.addWidget(self.btn_remove_anchor, 0, Qt.AlignmentFlag.AlignLeft)
+
         splitter.addWidget(bottom)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 5)
         layout.addWidget(splitter)
         return widget
 
@@ -408,9 +450,13 @@ class MainWindow(QMainWindow):
     def _build_output_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setContentsMargins(*[SPACE["5"]] * 4)
+        layout.setSpacing(SPACE["5"])
         box = QGroupBox("출력 설정")
         form = QFormLayout(box)
+        form.setSpacing(SPACE["3"])
         path_row = QHBoxLayout()
+        path_row.setSpacing(SPACE["3"])
         self.output_path_edit = QLineEdit()
         browse = QPushButton("찾아보기…")
         browse.clicked.connect(self._choose_output_path)
@@ -444,7 +490,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(box)
 
         controls = QHBoxLayout()
+        controls.setSpacing(SPACE["3"])
         self.btn_render = QPushButton("▶ 최종 영상 생성")
+        self.btn_render.setProperty("class", "primary")
         self.btn_render.clicked.connect(self.start_render)
         self.btn_render_cancel = QPushButton("취소")
         self.btn_render_cancel.setEnabled(False)
@@ -456,6 +504,7 @@ class MainWindow(QMainWindow):
 
         self.render_progress = QProgressBar()
         self.render_status = QLabel("")
+        self.render_status.setProperty("class", "meta")
         layout.addWidget(self.render_progress)
         layout.addWidget(self.render_status)
         layout.addStretch(1)
@@ -591,6 +640,7 @@ class MainWindow(QMainWindow):
     def _refresh_all_views(self):
         self.current_a_spin.setMaximum(self.project.perf_a.features.duration if self.project.perf_a else 60000)
         self.waveform.set_data(self.env_a, self.env_b, self.project.alignment, self.project.plan, self.project.manual_points)
+        self.waveform.set_current_time(self.current_a_spin.value())
         self._refresh_transition_table()
         self._refresh_anchor_table()
         self.preview.set_sources(
@@ -624,7 +674,7 @@ class MainWindow(QMainWindow):
                 item = QTableWidgetItem(str(value))
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if c == 5 and seg.confidence < 0.35:
-                    item.setForeground(Qt.GlobalColor.red)
+                    item.setForeground(QColor(TOKENS["DANGER"]))
                 self.tran_table.setItem(r, c, item)
         self.warnings_label.setText("\n".join(plan.warnings) if plan.warnings else "")
 
@@ -674,13 +724,30 @@ class MainWindow(QMainWindow):
         self.regenerate_transitions()
 
     def _on_current_a_changed(self, value: float):
+        self.waveform.set_current_time(value)
         if self.project.alignment and not self.preview.slider.isSliderDown():
             self.preview.show_time(value)
 
     def _on_slider(self, value: int):
         if self.project.alignment:
             duration = self.project.alignment.feat_a.times[-1]
+            self.waveform.set_current_time(duration * value / 1000.0)
             self.preview.show_time(duration * value / 1000.0)
+
+    def _on_waveform_time_selected(self, a_time: float):
+        self.current_a_spin.setValue(float(a_time))
+
+    def _on_waveform_anchor(self, a_t: float, b_t: float):
+        self.anchor_a_spin.setValue(float(a_t))
+        self.anchor_b_spin.setValue(float(b_t))
+        self.add_anchor()
+
+    def _on_waveform_anchor_removed(self, a_t: float, b_t: float):
+        self.project.manual_points = [
+            p for p in self.project.manual_points
+            if not (abs(p[0] - a_t) < 1e-3 and abs(p[1] - b_t) < 1e-3)
+        ]
+        self.regenerate_transitions()
 
     # ---- rendering -----------------------------------------------------
     def _choose_output_path(self):
