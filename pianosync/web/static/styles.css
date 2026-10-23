@@ -266,7 +266,7 @@ button { font-family: inherit; }
 .rail-foot-value { font-size: var(--fs-caption); color: var(--fg-2); }
 
 /* ── main ──────────────────────────────────────────────────────────── */
-.main { overflow-y: auto; min-width: 0; }
+.main { overflow-y: auto; overflow-x: hidden; min-width: 0; }
 .panel { display: none;
   padding: 22px calc(clamp(16px, 3vw, 34px) + var(--safe-right)) calc(48px + var(--safe-bottom)) calc(clamp(16px, 3vw, 34px) + var(--safe-left));
   max-width: var(--content-max); animation: fade .2s ease; }
@@ -430,14 +430,14 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: none;
 .stat .v { font-size: var(--fs-num); font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.2px; }
 .stat .v small { font-size: var(--fs-caption); font-weight: 400; color: var(--fg-2); margin-left: 3px; }
 
-.notice { margin-top: 14px; font-size: var(--fs-sm); padding: 10px 12px; border-radius: var(--r); border: 1px solid var(--border-2); color: var(--fg-2); background: var(--surface-2); }
+.notice { margin-top: 14px; font-size: var(--fs-sm); padding: 10px 12px; border-radius: var(--r); border: 1px solid var(--border-2); color: var(--fg-2); background: var(--surface-2); overflow-wrap: anywhere; }
 .notice-ai { border-color: var(--info-line); background: var(--info-tint); color: var(--notice-ai-fg); }
 
 /* ── source list ───────────────────────────────────────────────────── */
 .sources { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .source {
   display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 12px;
-  padding: 12px 14px; border: 1px solid transparent; border-radius: var(--r-lg);
+  padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r-lg);
   background: var(--surface-2); transition: border-color .14s, background .14s;
 }
 .source:hover { border-color: var(--border-2); }
@@ -520,13 +520,13 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: none;
 .seg .idx { width: 24px; height: 24px; display: grid; place-items: center; border-radius: var(--r-sm); font-size: var(--fs-caption); font-weight: 600; color: var(--on-lane); }
 .seg .meta { font-size: var(--fs-caption); color: var(--fg-2); font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .seg .meta b { color: var(--fg); font-weight: 500; }
-.seg .reason { font-size: var(--fs-caption); color: var(--fg-3); font-family: var(--sans); }
+.seg .reason { font-size: var(--fs-caption); color: var(--fg-3); font-family: var(--sans); overflow-wrap: anywhere; }
 .seg .conf { display: flex; flex-direction: column; gap: 5px; align-items: stretch; }
 .seg .confbar { height: 4px; border-radius: 999px; background: var(--border); overflow: hidden; }
 .seg .confbar > i { display: block; height: 100%; }
 .seg .conf-pct { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: var(--fs-caption); line-height: 1; color: var(--fg-3); text-align: right; }
 .warnlist { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
-.warnlist .warn { display: flex; gap: 8px; font-size: var(--fs-caption); color: var(--warn); background: var(--warn-tint); border: 1px solid var(--warn-line); padding: 8px 10px; border-radius: var(--r); }
+.warnlist .warn { display: flex; gap: 8px; font-size: var(--fs-caption); color: var(--warn); background: var(--warn-tint); border: 1px solid var(--warn-line); padding: 8px 10px; border-radius: var(--r); overflow-wrap: anywhere; }
 .warnlist .warn .ic { color: var(--warn); margin-top: 1px; }
 
 /* ── result ────────────────────────────────────────────────────────── */
