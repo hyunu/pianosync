@@ -185,7 +185,7 @@ button { font-family: inherit; }
 .brand-text { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
 .brand-name { font-weight: 600; font-size: var(--fs-body); letter-spacing: -.2px; white-space: nowrap; }
 .brand-tag { font-size: var(--fs-caption); color: var(--fg-3); white-space: nowrap; }
-.appbar-right { display: flex; align-items: center; gap: 8px; flex: none; }
+.appbar-right { display: flex; align-items: center; gap: 2px; flex: none; }
 
 .install-banner {
   flex: none;
@@ -616,7 +616,11 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: none;
   .brand-tag { display: none; }
   .rail { flex-direction: row; align-items: center; border-right: none; border-bottom: 1px solid var(--border); padding: 8px 10px; gap: 8px; overflow-x: auto; }
   .steps { flex-direction: row; }
-  .step-body { display: none; }
+  .step { flex: none; padding: 5px 7px; gap: 7px; }
+  .step-body { display: flex; }
+  .step-body small { display: none; }
+  .step-body b { font-size: var(--fs-caption); white-space: nowrap; }
+  .step-no { width: 20px; height: 20px; }
   .rail-section, .rail-foot { display: none; }
   .phead { flex-direction: column; }
   .phead .btn { align-self: stretch; }
