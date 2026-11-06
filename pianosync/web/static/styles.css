@@ -202,6 +202,7 @@ button { font-family: inherit; }
 
 .btn-icon { width: 34px; padding: 0; position: relative; }
 .btn.btn-icon .ic { width: 18px; height: 18px; }
+.solo-link { text-decoration: none; }
 
 .workbench {
   flex: 1; min-height: 0;
@@ -614,6 +615,7 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: none;
 @media (max-width: 760px) {
   .workbench { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .brand-tag { display: none; }
+  .solo-link-text { display: none; }
   .rail { flex-direction: row; align-items: center; border-right: none; border-bottom: 1px solid var(--border); padding: 8px 10px; gap: 8px; overflow-x: auto; }
   .steps { flex-direction: row; }
   .step { flex: none; padding: 5px 7px; gap: 7px; }

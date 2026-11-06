@@ -25,6 +25,7 @@ from ..errors import PianoSyncError
 from ..video.frames import extract_frame_png
 from ..video.overlay import default_preview_family, font_choices, servable_font_path
 from .jobs import JobManager
+from .solo_workspace import MAX_MOMENTS, SoloWorkspace, solo_style_choices
 from .workspace import Workspace
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -165,6 +166,7 @@ CONFIG = {
 def create_app(
     workspace: Optional[Workspace] = None,
     root: Optional[str] = None,
+    solo: Optional[SoloWorkspace] = None,
 ) -> FastAPI:
     root = root or os.environ.get("PIANOSYNC_WEB_ROOT", DEFAULT_ROOT)
     uploads_dir = os.path.join(root, "uploads")
@@ -174,6 +176,10 @@ def create_app(
     if settings.get("gemini_api_key"):
         set_api_key(settings["gemini_api_key"])
     ws = workspace or Workspace(
+        cache_dir=os.path.join(root, "cache"),
+        output_dir=os.path.join(root, "outputs"),
+    )
+    solo_ws = solo or SoloWorkspace(
         cache_dir=os.path.join(root, "cache"),
         output_dir=os.path.join(root, "outputs"),
     )
@@ -187,6 +193,7 @@ def create_app(
         allow_headers=["*"],
     )
     app.state.workspace = ws
+    app.state.solo = solo_ws
     app.state.jobs = jobs
     app.state.uploads_dir = uploads_dir
 
@@ -194,6 +201,10 @@ def create_app(
     @app.get("/")
     async def index() -> FileResponse:
         return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+    @app.get("/solo")
+    async def solo_page() -> FileResponse:
+        return FileResponse(os.path.join(STATIC_DIR, "solo.html"))
 
     @app.get("/manifest.webmanifest")
     async def manifest() -> FileResponse:
@@ -223,6 +234,25 @@ def create_app(
         data["defaults"]["ai_configured"] = bool(get_api_key())
         data["defaults"]["api_key_masked"] = _mask_key(get_api_key())
         data["defaults"]["overlay_font_preview_family"] = default_preview_family()
+        data["solo"] = {
+            "styles": solo_style_choices(),
+            "max_moments": MAX_MOMENTS,
+            "ai_configured": bool(get_api_key()),
+            "defaults": {
+                "style": "cinematic",
+                "intensity": 0.6,
+                "camera": True,
+                "punch": True,
+                "flash": True,
+                "glow": True,
+                "vignette": True,
+                "grain": True,
+                "letterbox": False,
+                "intro_seconds": 2.5,
+                "normalize_audio": True,
+                "include_audio": True,
+            },
+        }
         return data
 
     @app.get("/api/overlay-font")
@@ -439,6 +469,110 @@ def create_app(
             result.path,
             media_type="video/mp4",
             filename=os.path.basename(result.path),
+        )
+
+    # -- solo cinema ----------------------------------------------------
+    @app.post("/api/solo/analyze")
+    async def solo_analyze(payload: dict) -> dict:
+        path = _require_file(payload.get("path"))
+        quality = payload.get("quality", "balanced")
+        try:
+            max_moments = int(payload.get("max_moments", MAX_MOMENTS))
+        except (TypeError, ValueError):
+            max_moments = MAX_MOMENTS
+        job = jobs.create("solo-analyze")
+
+        def work(progress) -> dict:
+            return solo_ws.analyze(
+                path,
+                quality=quality,
+                max_moments=max_moments,
+                progress=progress,
+            )
+
+        jobs.run(job, work)
+        return {"job_id": job.id}
+
+    @app.get("/api/solo/status")
+    async def solo_status() -> dict:
+        return solo_ws.status_payload()
+
+    @app.get("/api/solo/waveform")
+    async def solo_waveform() -> dict:
+        return solo_ws.waveform_payload()
+
+    @app.post("/api/solo/moments")
+    async def solo_moments(payload: dict) -> dict:
+        solo_ws.set_selection(payload)
+        return solo_ws.status_payload()
+
+    @app.post("/api/solo/direct")
+    async def solo_direct(payload: dict) -> dict:
+        if not solo_ws.ready:
+            raise HTTPException(status_code=400, detail="분석을 먼저 실행하세요.")
+        note = str(payload.get("note") or "")[:240]
+        job = jobs.create("solo-direct")
+
+        def work(progress) -> dict:
+            return solo_ws.direct(note=note, progress=progress)
+
+        jobs.run(job, work)
+        return {"job_id": job.id}
+
+    @app.post("/api/solo/render")
+    async def solo_render(payload: dict) -> dict:
+        if not solo_ws.ready:
+            raise HTTPException(status_code=400, detail="분석을 먼저 실행하세요.")
+        job = jobs.create("solo-render")
+
+        def work(progress) -> dict:
+            result = solo_ws.render(payload, progress=progress)
+            return {
+                "name": os.path.basename(result.path),
+                "duration": round(result.duration, 2),
+                "width": result.width,
+                "height": result.height,
+                "fps": round(result.fps, 2),
+                "moments": result.moments,
+                "style": result.style,
+                "intro_seconds": round(result.intro_seconds, 2),
+            }
+
+        jobs.run(job, work)
+        return {"job_id": job.id}
+
+    @app.post("/api/solo/reset")
+    async def solo_reset() -> dict:
+        solo_ws.reset()
+        return {"ok": True}
+
+    @app.get("/api/solo/media")
+    async def solo_media() -> FileResponse:
+        if not solo_ws.ready or solo_ws.performance is None:
+            raise HTTPException(status_code=404, detail="영상이 없습니다.")
+        path = solo_ws.performance.path
+        if not os.path.isfile(path):
+            raise HTTPException(status_code=404, detail="영상이 없습니다.")
+        return FileResponse(path, media_type="video/mp4")
+
+    def _solo_result() -> str:
+        result = solo_ws.last_render
+        if result is None or not os.path.isfile(result.path):
+            raise HTTPException(status_code=404, detail="생성된 영상이 없습니다.")
+        return result.path
+
+    @app.get("/api/solo/result")
+    async def solo_result() -> FileResponse:
+        path = _solo_result()
+        return FileResponse(path, media_type="video/mp4")
+
+    @app.get("/api/solo/download")
+    async def solo_download() -> FileResponse:
+        path = _solo_result()
+        return FileResponse(
+            path,
+            media_type="video/mp4",
+            filename=os.path.basename(path),
         )
 
     # -- error helper ---------------------------------------------------

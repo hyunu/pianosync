@@ -71,6 +71,39 @@ def test_index_served(client):
     assert "/manifest.webmanifest" in res.text
 
 
+def test_solo_page_served(client):
+    res = client.get("/solo")
+    assert res.status_code == 200
+    assert "솔로 시네마" in res.text
+    assert "/static/solo.js" in res.text
+    assert "/static/solo.css" in res.text
+    # The solo page must load the shared design system too.
+    assert "/static/styles.css" in res.text
+
+    cfg = client.get("/api/config").json()
+    assert {s["value"] for s in cfg["solo"]["styles"]} == {
+        "cinematic", "noir", "neon", "warm", "clean",
+    }
+    assert cfg["solo"]["max_moments"] >= 4
+    assert cfg["solo"]["defaults"]["intensity"] == 0.6
+    assert cfg["solo"]["defaults"]["camera"] is True
+
+
+def test_solo_status_before_analysis(client):
+    status = client.get("/api/solo/status").json()
+    assert status["ready"] is False
+    assert status["moment_count"] == 0
+    assert client.get("/api/solo/waveform").json()["ready"] is False
+    assert client.get("/api/solo/result").status_code == 404
+    assert client.get("/api/solo/media").status_code == 404
+    assert client.post("/api/solo/render", json={}).status_code == 400
+
+
+def test_solo_analyze_requires_file(client):
+    res = client.post("/api/solo/analyze", json={"path": "/nope/missing.mp4"})
+    assert res.status_code == 400
+
+
 def test_api_key_settings(client, tmp_path, monkeypatch):
     from pianosync.ai.gemini import GeminiClient
 
@@ -202,6 +235,75 @@ def test_render_and_download(client):
 
 
 @pytest.mark.skipif(not _has_ffmpeg(), reason="ffmpeg not installed")
+def test_solo_workflow(client):
+    analyze = client.post(
+        "/api/solo/analyze",
+        json={"path": SAMPLE_A, "quality": "fast", "max_moments": 6},
+    ).json()
+    job = _wait(client, analyze["job_id"])
+    assert job["status"] == "done", job.get("error")
+
+    status = client.get("/api/solo/status").json()
+    assert status["ready"] is True
+    assert status["source"]["name"] == "A.MP4"
+    assert status["moment_count"] >= 1
+    assert len(status["plan"]["moments"]) == status["moment_count"]
+    assert status["selected"] == list(range(status["moment_count"]))
+
+    wave = client.get("/api/solo/waveform").json()
+    assert wave["ready"] is True
+    assert wave["energy"]["t"] and wave["energy"]["v"]
+    assert wave["moments"]
+
+    media = client.get("/api/solo/media")
+    assert media.status_code == 200
+    assert media.headers["content-type"] == "video/mp4"
+
+    chosen = [m["id"] for m in status["plan"]["moments"][:2]]
+    selected = client.post("/api/solo/moments", json={"moments": chosen}).json()
+    assert selected["selected"] == chosen
+
+    render = client.post(
+        "/api/solo/render",
+        json={
+            "filename": "solo-out.mp4",
+            "width": 320,
+            "height": 568,
+            "fps": 15,
+            "crf": 34,
+            "style": "neon",
+            "intensity": 0.7,
+            "moments": chosen,
+            "intro_text": "Test",
+            "intro_subtitle": "Solo",
+            "intro_seconds": 1.0,
+        },
+    ).json()
+    rjob = _wait(client, render["job_id"], timeout=300)
+    assert rjob["status"] == "done", rjob.get("error")
+    result = rjob["result"]
+    assert result["moments"] == len(chosen)
+    assert result["style"] == "neon"
+    assert result["intro_seconds"] == 1.0
+    assert (result["width"], result["height"]) == (320, 568)
+
+    inline = client.get("/api/solo/result")
+    assert inline.status_code == 200
+    assert inline.headers["content-type"] == "video/mp4"
+    assert len(inline.content) > 1000
+
+    download = client.get("/api/solo/download")
+    assert download.status_code == 200
+    assert "solo-out.mp4" in download.headers["content-disposition"]
+
+    # A reset clears the workspace but not the generated file on disk.
+    assert client.post("/api/solo/reset").json()["ok"] is True
+    cleared = client.get("/api/solo/status").json()
+    assert cleared["ready"] is False
+    assert cleared["render"] is None
+
+
+@pytest.mark.skipif(not _has_ffmpeg(), reason="ffmpeg not installed")
 def test_multi_source_workflow(client):
     body = {
         "paths": [SAMPLE_A, SAMPLE_B, SAMPLE_A],
@@ -243,3 +345,47 @@ def test_multi_source_workflow(client):
     download = client.get("/api/download")
     assert download.status_code == 200
     assert len(download.content) > 1000
+
+
+@pytest.mark.skipif(not _has_ffmpeg(), reason="ffmpeg not installed")
+def test_solo_ai_direction(client, monkeypatch):
+    import pianosync.ai.solo_director as director
+
+    analyze = client.post(
+        "/api/solo/analyze",
+        json={"path": SAMPLE_A, "quality": "fast", "max_moments": 6},
+    ).json()
+    job = _wait(client, analyze["job_id"])
+    assert job["status"] == "done", job.get("error")
+
+    def fake_direction(plan, note="", client=None):
+        return {
+            "style": "noir",
+            "intensity": 0.75,
+            "camera": True,
+            "punch": True,
+            "flash": False,
+            "glow": True,
+            "letterbox": True,
+            "keep_moments": [0],
+            "emphasis": {0: 1.2},
+            "reason": "테스트 연출",
+            "model": "fake-model",
+        }
+
+    monkeypatch.setattr(director, "request_direction", fake_direction)
+    direct = client.post("/api/solo/direct", json={"note": "더 강하게"}).json()
+    djob = _wait(client, direct["job_id"])
+    assert djob["status"] == "done", djob.get("error")
+
+    status = client.get("/api/solo/status").json()
+    assert status["selected"] == [0]
+    assert status["direction"]["style"] == "noir"
+    assert status["direction"]["reason"] == "테스트 연출"
+    assert status["settings"]["style"] == "noir"
+    assert status["settings"]["flash"] is False
+    assert status["settings"]["letterbox"] is True
+
+    wave = client.get("/api/solo/waveform").json()
+    assert wave["selected"] == [0]
+    assert wave["direction"]["model"] == "fake-model"

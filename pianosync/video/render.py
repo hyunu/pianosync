@@ -186,7 +186,7 @@ def _build_filter_complex(
     return ";".join(parts)
 
 
-def _run_ffmpeg_with_progress(
+def run_ffmpeg_with_progress(
     cmd: List[str],
     total_duration: float,
     progress: Progress,
@@ -335,7 +335,7 @@ def render_final_video_multi(
             "-y",
             video_only,
         ]
-        _run_ffmpeg_with_progress(
+        run_ffmpeg_with_progress(
             cmd, total_video, progress, 0.05, 0.6, "Rendering video…", err_path
         )
 
@@ -402,7 +402,7 @@ def render_final_video_multi(
             "-y",
             final_path,
         ]
-        _run_ffmpeg_with_progress(
+        run_ffmpeg_with_progress(
             mux_cmd, total_video, progress, 0.75, 0.25, "Muxing audio and video…", mux_err
         )
 

@@ -1,10 +1,13 @@
 // Piano Sync service worker — thin client shell cache.
 // Strategy: network-first (always fresh when online), falling back to cache offline.
-const CACHE = "pianosync-shell-v1";
+const CACHE = "pianosync-shell-v4";
 const SHELL = [
   "/",
+  "/solo",
   "/static/styles.css",
   "/static/app.js",
+  "/static/solo.css",
+  "/static/solo.js",
   "/static/icon.svg",
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
@@ -39,12 +42,10 @@ self.addEventListener("fetch", (event) => {
       .then((res) => {
         if (res && res.status === 200 && res.type === "basic") {
           const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          caches.open(CACHE).then((c) => c.put(req, copy));
         }
         return res;
       })
-      .catch(() =>
-        caches.match(req).then((cached) => cached || caches.match("/"))
-      )
+      .catch(() => caches.match(req).then((hit) => hit || caches.match("/")))
   );
 });

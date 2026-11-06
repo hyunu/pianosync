@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Piano Sync — 솔로 시네마</title>
+<meta name="description" content="한 개의 피아노 연주를 분석해 임팩트 순간에 시네마틱한 연출을 더합니다." />
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon-180.png" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="theme-color" content="#0a0b0d" />
+<script>
+  (function () {
+    try {
+      var p = localStorage.getItem("pianosync-theme") || "auto";
+      var d = (p === "light" || p === "dark") ? p
+        : (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+      document.documentElement.dataset.theme = d;
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.setAttribute("content", d === "light" ? "#f7f8fa" : "#0a0b0d");
+    } catch (e) {}
+  })();
+</script>
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Piano Sync" />
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+<link rel="stylesheet" href="/static/styles.css" />
+<link rel="stylesheet" href="/static/solo.css" />
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 12h3l2.5-7 4 14 2.5-7H22"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></symbol>
+    <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 14l.7 1.8L21.5 16.5l-1.8.7L19 19l-.7-1.8L16.5 16.5l1.8-.7z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></symbol>
+    <symbol id="i-film" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="16" rx="2"/><path d="M7 4v16M17 4v16M2.5 9h4.5M2.5 15h4.5M17 9h4.5M17 15h4.5"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1.5 14h5M9.5 8h5M17.5 16h5"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3.5 20 12 6 20.5z"/></symbol>
+    <symbol id="i-type" viewBox="0 0 24 24"><path d="M4 7V4h16v3M12 4v16M8.5 20h7"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 2 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M12 14 18 8"/><path d="M3.5 18a9 9 0 1 1 17 0"/></symbol>
+    <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></symbol>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></symbol>
+  </defs>
+</svg>
+
+<div class="app">
+
+  <!-- ── top bar ─────────────────────────────────────────────── -->
+  <header class="appbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"><svg class="ic"><use href="#i-wave"/></svg></span>
+      <span class="brand-text">
+        <span class="brand-name">Piano Sync <span class="solo-brand-pill">SOLO</span></span>
+        <span class="brand-tag">솔로 시네마 · 한 연주를 더 드라마틱하게</span>
+      </span>
+    </div>
+    <div class="appbar-right">
+      <a class="btn btn-ghost solo-back" href="/" title="비교 스튜디오로 이동">
+        <svg class="ic"><use href="#i-layers"/></svg><span class="solo-back-text">비교 스튜디오</span>
+      </a>
+      <button id="themeBtn" class="btn btn-ghost btn-icon" type="button" title="테마 전환" aria-label="테마 전환">
+        <svg class="ic"><use href="#i-settings"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="workbench">
+
+    <!-- ── left rail ─────────────────────────────────────────── -->
+    <aside class="rail">
+      <nav class="steps" aria-label="작업 흐름">
+        <button class="step is-active" data-step="1" type="button">
+          <span class="step-no">1</span>
+          <span class="step-body"><b>소스 · 분석</b><small>한 연주 · 임팩트 찾기</small></span>
+          <span class="step-check"><svg class="ic"><use href="#i-check"/></svg></span>
+        </button>
+        <button class="step" data-step="2" type="button">
+          <span class="step-no">2</span>
+          <span class="step-body"><b>연출 · 렌더</b><small>스타일 · 효과 · 다운로드</small></span>
+          <span class="step-check"><svg class="ic"><use href="#i-check"/></svg></span>
+        </button>
+      </nav>
+
+      <div class="rail-section">
+        <div class="rail-title">소스 <span id="railCount" class="rail-count">0/1</span></div>
+        <div class="rail-sources" id="railSources">
+          <p class="rail-empty">아직 추가된 영상이 없습니다.</p>
+        </div>
+      </div>
+
+      <div class="rail-section" id="railMoments" hidden>
+        <div class="rail-title">임팩트 <span id="railMomentCount" class="rail-count">0</span></div>
+        <div class="solo-rail-meter">
+          <div class="solo-rail-meter-bar"><i id="railMeterBar"></i></div>
+          <span id="railMeterText">—</span>
+        </div>
+      </div>
+
+      <div class="rail-foot">
+        <span class="rail-foot-label">분석 엔진</span>
+        <span class="rail-foot-value">로컬 RMS + onset · Gemini 불필요</span>
+      </div>
+    </aside>
+
+    <!-- ── main ──────────────────────────────────────────────── -->
+    <main class="main">
+
+      <!-- STEP 1 ─ 소스 · 분석 -->
+      <section class="panel is-active" data-panel="1">
+        <div class="phead">
+          <div class="phead-text">
+            <h1>한 연주를 더 드라마틱하게</h1>
+            <p>피아노 솔로 영상 하나를 넣으면 음량과 타건을 분석해 임팩트 순간을 찾습니다. 그 지점에 푸시인·플래시·글로우를 넣어 장면이 살아나는 연출 영상을 만듭니다.</p>
+          </div>
+          <button id="analyzeBtn" class="btn btn-primary" type="button" disabled>
+            <svg class="ic"><use href="#i-sparkles"/></svg><span>분석 시작</span>
+          </button>
+        </div>
+
+        <div class="solo-drop-zone" id="soloDrop">
+          <button id="addSourceBtn" class="addsource" type="button">
+            <svg class="ic"><use href="#i-plus"/></svg>
+            <span><b>연주 영상 추가</b> · 드래그 앤 드롭 또는 클릭 (mp4 · mov · mkv · m4v)</span>
+          </button>
+          <input type="file" id="hiddenFile" accept="video/*" hidden />
+        </div>
+
+        <div class="sources" id="sourceList"></div>
+
+        <div class="card" id="analyzeSettings">
+          <div class="card-title"><svg class="ic"><use href="#i-sliders"/></svg><span>분석 설정</span></div>
+          <div class="fieldgrid">
+            <label class="field">
+              <span class="field-label">분석 품질</span>
+              <select id="soloQuality"></select>
+            </label>
+            <label class="field">
+              <span class="field-label">임팩트 최대 개수 <b class="mono" id="momentCountVal">8</b></span>
+              <input type="range" id="soloMoments" min="1" max="12" step="1" value="8" />
+            </label>
+          </div>
+          <p class="field-note">최대 개수일 뿐, 실제로는 음량이 크게 솟는 지점만 골라 넣습니다. 짧은 연주는 2~4개 정도로 끝날 수 있고, 분석 후 타임라인에서 개별로 켜고 끌 수 있습니다.</p>
+        </div>
+
+        <div class="runbar" id="runCard" hidden>
+          <span class="spinner"></span>
+          <span id="runMsg">준비 중…</span>
+          <button id="cancelBtn" class="btn btn-ghost btn-sm" type="button">취소</button>
+        </div>
+
+        <div class="card result-card" id="summaryCard" hidden>
+          <div class="card-title">
+            <svg class="ic"><use href="#i-check"/></svg><span>분석 요약</span>
+            <span class="tag tag-ok" id="summaryBadge">완료</span>
+          </div>
+          <div class="statgrid" id="statGrid"></div>
+          <p class="notice" id="soloNote" hidden></p>
+        </div>
+
+        <div class="card card-flush card-timeline" id="timelineCard" hidden>
+          <div class="card-title">
+            <svg class="ic"><use href="#i-zap"/></svg><span>임팩트 타임라인</span>
+            <span class="tag" id="momentCount">0</span>
+            <div class="wave-tools">
+              <span class="readout mono" id="timeReadout">0.00s</span>
+            </div>
+          </div>
+          <div class="wave-wrap">
+            <canvas id="soloWave" height="260" role="img" aria-label="연주 에너지와 임팩트 지점. 마커를 클릭해 켜고 끕니다."></canvas>
+          </div>
+          <div class="legend" id="legend">
+            <span class="leg"><span class="swatch" style="background:var(--fg-2)"></span>음량 에너지</span>
+            <span class="leg"><span class="swatch sq" id="legOn"></span>켜진 임팩트</span>
+            <span class="leg"><span class="swatch sq" style="background:var(--fg-3);opacity:.4"></span>꺼진 임팩트</span>
+            <span class="leg"><span class="swatch" style="background:var(--border-2)"></span>프레이즈</span>
+          </div>
+          <div class="timeline-segs">
+            <div class="seglist" id="momentList"></div>
+          </div>
+        </div>
+
+        <div class="solo-next" id="nextRow" hidden>
+          <button class="btn btn-primary" type="button" id="toRenderBtn">
+            <svg class="ic"><use href="#i-film"/></svg><span>연출 설정으로</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- STEP 2 ─ 연출 · 렌더 -->
+      <section class="panel" data-panel="2">
+        <div class="phead">
+          <div class="phead-text">
+            <h1>연출 영상 만들기</h1>
+            <p>원본의 흐름과 오디오는 그대로 유지하면서 색감·빛·카메라 움직임만 더합니다. 스타일과 강도를 고르고 렌더링하세요.</p>
+          </div>
+          <button id="renderBtn" class="btn btn-primary" type="button" disabled>
+            <svg class="ic"><use href="#i-film"/></svg><span>연출 영상 생성</span>
+          </button>
+        </div>
+
+        <div class="render-prog" id="renderProg" hidden>
+          <div class="render-prog-head">
+            <span class="spinner"></span>
+            <span id="renderMsg">렌더링 준비 중…</span>
+            <b class="render-pct mono" id="renderPct">0%</b>
+          </div>
+          <div class="render-progress" aria-hidden="true"><i id="renderBar"></i></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><svg class="ic"><use href="#i-sparkles"/></svg><span>스타일 프리셋</span><span class="hint" id="styleHint">시네마틱</span></div>
+          <div class="solo-style-grid" id="styleGrid" role="radiogroup" aria-label="스타일 프리셋"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><svg class="ic"><use href="#i-sparkles"/></svg><span>AI 연출 감독</span><span class="hint" id="aiHint">선택 사항</span></div>
+          <div class="ai-direct-row">
+            <input type="text" id="aiMood" maxlength="120" placeholder="연출 방향 (선택) · 예: 더 웅장하게, 느와르 느낌" autocomplete="off" />
+            <button id="aiDirectBtn" class="btn btn-ghost" type="button">
+              <svg class="ic"><use href="#i-sparkles"/></svg><span>AI 연출 제안</span>
+            </button>
+          </div>
+          <p class="field-note" id="aiDirectNote">로컬 분석에서 찾은 임팩트만 골라 스타일·강도·카메라를 제안합니다. 타이밍과 오디오는 바꾸지 않습니다.</p>
+          <p class="ai-direct-reason" id="aiDirectReason" hidden></p>
+        </div>
+
+        <div class="cols">
+          <div class="card">
+            <div class="card-title"><svg class="ic"><use href="#i-gauge"/></svg><span>연출 강도</span><b class="mono" id="intensityVal">60</b></div>
+            <label class="field">
+              <span class="field-label">약하게 · 원본에 가깝게 ↔ 강하게 · 극적으로</span>
+              <input type="range" id="intensity" min="0" max="100" step="1" value="60" />
+            </label>
+            <div class="solo-intensity-scale"><span>0</span><span>50</span><span>100</span></div>
+            <p class="field-note" id="intensityNote">푸시인·플래시·글로우·그레인의 세기가 함께 조절됩니다.</p>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><svg class="ic"><use href="#i-sliders"/></svg><span>효과</span></div>
+            <div class="solo-toggle-grid">
+              <label class="switch switch-row"><input type="checkbox" id="fxCamera" checked /><span class="track"></span><span class="switch-text">카메라 무빙</span></label>
+              <label class="switch switch-row"><input type="checkbox" id="fxPunch" checked /><span class="track"></span><span class="switch-text">임팩트 푸시인</span></label>
+              <label class="switch switch-row"><input type="checkbox" id="fxFlash" checked /><span class="track"></span><span class="switch-text">순간 플래시</span></label>
+              <label class="switch switch-row"><input type="checkbox" id="fxGlow" checked /><span class="track"></span><span class="switch-text">블룸 / 글로우</span></label>
+              <label class="switch switch-row"><input type="checkbox" id="fxVignette" checked /><span class="track"></span><span class="switch-text">비네트</span></label>
+              <label class="switch switch-row"><input type="checkbox" id="fxGrain" checked /><span class="track"></span><span class="switch-text">필름 그레인</span></label>
+              <label class="switch switch-row"><input type="checkbox" id="fxLetterbox" /><span class="track"></span><span class="switch-text">레터박스</span></label>
+            </div>
+          </div>
+
+          <div class="card card-wide">
+            <div class="card-title"><svg class="ic"><use href="#i-type"/></svg><span>인트로 타이틀</span><span class="hint">비우면 넣지 않음</span></div>
+            <div class="fieldgrid">
+              <label class="field field-wide">
+                <span class="field-label">제목</span>
+                <input type="text" id="introText" maxlength="80" placeholder="예: Nocturne in E-flat major" autocomplete="off" />
+              </label>
+              <label class="field field-wide">
+                <span class="field-label">부제</span>
+                <input type="text" id="introSubtitle" maxlength="120" placeholder="예: 2026 봄 연주회 · 앙코르" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span class="field-label">길이 (초)</span>
+                <input type="number" id="introSeconds" min="0" max="8" step="0.5" value="2.5" />
+              </label>
+              <label class="field field-switch">
+                <span class="field-label">오디오</span>
+                <span class="switch">
+                  <input type="checkbox" id="normalizeAudio" checked />
+                  <span class="track"></span>
+                  <span class="switch-text">라우드니스 정규화</span>
+                </span>
+              </label>
+            </div>
+            <p class="field-note">타이틀 카드는 스타일의 강조색으로 생성되어 본 영상 앞에 붙습니다. 소리는 타이틀 뒤에서 자연스럽게 시작합니다.</p>
+          </div>
+
+          <details class="card card-collapsible card-collapsible-wide">
+            <summary class="card-title">
+              <svg class="ic" aria-hidden="true"><use href="#i-film"/></svg>
+              <span>출력 설정</span>
+              <span class="hint">세로 9:16 · 1:1 지원</span>
+              <span class="collapse-chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="card-collapsible-body">
+              <div class="fieldgrid">
+                <label class="field"><span class="field-label">출력 크기</span><select id="resolution"></select></label>
+                <label class="field"><span class="field-label">FPS</span><input type="number" id="fps" value="30" min="15" max="60" step="1" /></label>
+                <label class="field field-wide">
+                  <span class="field-label">품질 (CRF) <b class="mono" id="crfVal">20</b></span>
+                  <input type="range" id="crf" min="14" max="28" value="20" />
+                </label>
+                <label class="field field-wide"><span class="field-label">파일 이름</span><input type="text" id="filename" value="solo-cinema.mp4" /></label>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><svg class="ic"><use href="#i-play"/></svg><span>결과</span></div>
+          <div class="result-empty" id="resultEmpty">
+            <svg class="ic ic-lg"><use href="#i-film"/></svg>
+            <span>아직 생성된 영상이 없습니다</span>
+          </div>
+          <div id="resultBox" hidden>
+            <div class="statgrid" id="renderStats"></div>
+            <video id="resultVideo" controls playsinline></video>
+            <a id="downloadLink" class="btn btn-primary btn-wide" href="/api/solo/download">
+              <svg class="ic"><use href="#i-download"/></svg><span>다운로드</span>
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ── status bar ──────────────────────────────────────────── -->
+  <footer class="statusbar">
+    <div class="status-left">
+      <span class="status-state" id="statusState"><i class="dot-idle"></i>대기</span>
+      <span class="status-msg" id="statusMsg"></span>
+    </div>
+    <div class="status-right">
+      <span class="status-item"><svg class="ic"><use href="#i-clock"/></svg><span id="statusDur">—</span></span>
+      <span class="status-item"><svg class="ic"><use href="#i-zap"/></svg><span id="statusMoments">—</span></span>
+      <span class="status-item"><svg class="ic"><use href="#i-film"/></svg><span id="statusStyle">—</span></span>
+    </div>
+    <div class="status-progress" id="statusProgress" hidden aria-hidden="true"><i id="statusBar"></i></div>
+  </footer>
+</div>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<script src="/static/solo.js"></script>
+</body>
+</html>

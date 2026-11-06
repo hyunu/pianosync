@@ -1,0 +1,141 @@
+/* Solo Cinema — page-specific styles layered on the shared design system. */
+
+.solo-brand-pill {
+  display: inline-flex; align-items: center; height: 16px; padding: 0 6px;
+  margin-left: 3px; border-radius: 999px;
+  font-size: 9px; font-weight: 700; letter-spacing: .7px;
+  color: var(--bg); background: var(--fg-2); vertical-align: 1px;
+}
+.solo-back { text-decoration: none; }
+
+/* ── drop zone ─────────────────────────────────────────────────────── */
+.solo-drop-zone { position: relative; }
+.solo-drop-zone .addsource { margin-bottom: 12px; }
+.solo-drop-zone.is-dragging .addsource {
+  border-color: var(--fg-2);
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+/* ── rail extras ───────────────────────────────────────────────────── */
+.solo-rail-meter { display: flex; flex-direction: column; gap: 6px; padding: 0 2px; }
+.solo-rail-meter-bar { height: 4px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.solo-rail-meter-bar > i { display: block; height: 100%; width: 0; background: var(--fg-2); transition: width .2s; }
+.solo-rail-meter span { font-size: var(--fs-caption); color: var(--fg-3); font-family: var(--mono); }
+
+/* ── next step ─────────────────────────────────────────────────────── */
+.solo-next { display: flex; justify-content: flex-end; margin-top: 4px; }
+.solo-next .btn { height: 40px; padding: 0 18px; }
+
+/* ── AI director ───────────────────────────────────────────────────── */
+.ai-direct-row { display: flex; gap: 8px; align-items: center; }
+.ai-direct-row input { flex: 1; min-width: 0; }
+.ai-direct-row .btn { flex: 0 0 auto; height: 34px; white-space: nowrap; }
+.ai-direct-reason {
+  margin: 2px 0 0; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface-2); color: var(--fg-2);
+  font-size: var(--fs-caption); line-height: 1.55;
+}
+@media (max-width: 560px) {
+  .ai-direct-row { flex-direction: column; align-items: stretch; }
+  .ai-direct-row .btn { justify-content: center; }
+}
+
+/* ── style presets ─────────────────────────────────────────────────── */
+.solo-style-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;
+}
+.solo-style-card {
+  --accent: var(--fg-2);
+  position: relative; display: flex; flex-direction: column; gap: 9px;
+  padding: 13px 13px 12px; text-align: left; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface-2); color: var(--fg-2);
+  transition: border-color .14s, background .14s, transform .14s;
+}
+.solo-style-card:hover { border-color: var(--border-2); background: var(--hover); }
+.solo-style-card.is-active {
+  border-color: var(--accent); color: var(--fg);
+  background: var(--surface); box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.solo-style-card .swatch-band {
+  height: 30px; border-radius: var(--r-sm); opacity: .9;
+  background:
+    radial-gradient(120% 150% at 18% 0%, var(--accent) 0%, transparent 58%),
+    linear-gradient(100deg, var(--surface) 10%, var(--sunken) 95%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08);
+}
+.solo-style-card .label { font-size: var(--fs-sm); font-weight: 600; color: var(--fg); }
+.solo-style-card .desc { font-size: var(--fs-caption); line-height: 1.4; color: var(--fg-3); }
+.solo-style-card .check {
+  position: absolute; top: 9px; right: 9px; width: 18px; height: 18px;
+  display: none; place-items: center; border-radius: 50%;
+  background: var(--accent); color: var(--bg);
+}
+.solo-style-card.is-active .check { display: grid; }
+.solo-style-card .check .ic { width: 11px; height: 11px; stroke-width: 3; }
+
+/* ── intensity ─────────────────────────────────────────────────────── */
+.solo-intensity-scale {
+  display: flex; justify-content: space-between; margin-top: 5px;
+  font-family: var(--mono); font-size: var(--fs-caption); color: var(--fg-3);
+}
+.solo-intensity-scale span:nth-child(2) { color: var(--fg-2); }
+
+/* ── effect toggles ────────────────────────────────────────────────── */
+.solo-toggle-grid { display: grid; grid-template-columns: 1fr; gap: 0; }
+.solo-toggle-grid .switch-row {
+  margin-top: 0; padding: 9px 0; border-top: 1px solid var(--border);
+}
+.solo-toggle-grid .switch-row:first-child { border-top: none; padding-top: 0; }
+.solo-toggle-grid .switch-row:last-child { padding-bottom: 0; }
+.solo-toggle-grid .switch { width: 100%; justify-content: space-between; }
+.solo-toggle-grid .switch-text { order: -1; color: var(--fg-2); }
+
+/* ── moment list ───────────────────────────────────────────────────── */
+.solo-moment {
+  display: grid;
+  grid-template-columns: auto 64px 1fr auto;
+  align-items: center; gap: 11px;
+  padding: 9px 10px; border-radius: var(--r);
+  border: 1px solid transparent; background: var(--surface-2);
+  cursor: pointer; transition: border-color .12s, opacity .12s;
+}
+.solo-moment:hover { border-color: var(--border-2); }
+.solo-moment.is-off { opacity: .48; }
+.solo-moment .check {
+  width: 18px; height: 18px; display: grid; place-items: center; flex: none;
+  border-radius: 5px; border: 1.5px solid var(--border-2); color: transparent;
+  background: var(--sunken); cursor: pointer;
+}
+.solo-moment .check .ic { width: 12px; height: 12px; stroke-width: 3; }
+.solo-moment.is-on .check { background: var(--accent, var(--ok)); border-color: var(--accent, var(--ok)); color: var(--on-lane); }
+.solo-moment .sm-time { font-family: var(--mono); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; color: var(--fg); }
+.solo-moment .sm-body { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.solo-moment .sm-kind { font-size: var(--fs-caption); color: var(--fg-3); }
+.solo-moment .sm-bar { height: 3px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.solo-moment .sm-bar > i { display: block; height: 100%; background: var(--accent, var(--fg-2)); }
+.solo-moment .sm-strength { font-family: var(--mono); font-size: var(--fs-caption); color: var(--fg-3); }
+
+/* ── timeline ──────────────────────────────────────────────────────── */
+#soloWave {
+  display: block; width: 100%; height: 260px; cursor: pointer;
+  touch-action: pan-y;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+.solo-timeline-hint {
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 16px 0; font-size: var(--fs-caption); color: var(--fg-3);
+}
+.solo-timeline-hint .ic { width: 13px; height: 13px; }
+
+/* ── misc ──────────────────────────────────────────────────────────── */
+.card-wide { grid-column: 1 / -1; }
+
+@media (max-width: 760px) {
+  .solo-back-text { display: none; }
+  #soloWave { height: 220px; }
+  .solo-moment { grid-template-columns: auto 56px 1fr; }
+  .solo-moment .sm-strength { display: none; }
+}
