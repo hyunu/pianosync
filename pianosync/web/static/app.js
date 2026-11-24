@@ -1223,6 +1223,30 @@
       await api("/api/new", { method: "POST" });
       location.reload();
     });
+
+    // ── two entry points on the same page ──────────────────────────────
+    const comparePanel = $("#compareMode");
+    const scorePanel = $("#scoreMode");
+    function setMode(mode) {
+      const active = mode === "score" ? "score" : "compare";
+      document.documentElement.dataset.mode = active;
+      $$(".mode-btn").forEach((btn) => {
+        const on = btn.dataset.mode === active;
+        btn.classList.toggle("is-active", on);
+        btn.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      if (comparePanel) comparePanel.hidden = active !== "compare";
+      if (scorePanel) scorePanel.hidden = active !== "score";
+      const url = new URL(location.href);
+      if (active === "score") url.searchParams.set("mode", "score");
+      else url.searchParams.delete("mode");
+      history.replaceState(null, "", url);
+      window.dispatchEvent(new CustomEvent("pianosync:mode", { detail: { mode: active } }));
+    }
+    $$(".mode-btn").forEach((btn) => {
+      btn.addEventListener("click", () => setMode(btn.dataset.mode));
+    });
+    setMode(new URLSearchParams(location.search).get("mode"));
   }
 
   document.addEventListener("DOMContentLoaded", boot);

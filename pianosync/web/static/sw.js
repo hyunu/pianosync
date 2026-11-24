@@ -1,11 +1,13 @@
 // Piano Sync service worker — thin client shell cache.
 // Strategy: network-first (always fresh when online), falling back to cache offline.
-const CACHE = "pianosync-shell-v4";
+const CACHE = "pianosync-shell-v5";
 const SHELL = [
   "/",
   "/solo",
   "/static/styles.css",
+  "/static/score.css",
   "/static/app.js",
+  "/static/score.js",
   "/static/solo.css",
   "/static/solo.js",
   "/static/icon.svg",

@@ -31,6 +31,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
 <link rel="stylesheet" href="/static/styles.css" />
+<link rel="stylesheet" href="/static/score.css" />
 </head>
 <body>
 
@@ -66,6 +67,10 @@
         <span class="brand-tag">연주 비교 스튜디오</span>
       </span>
     </div>
+    <div class="mode-switch" role="tablist" aria-label="작업 모드">
+      <button class="mode-btn is-active" data-mode="compare" role="tab" aria-selected="true" type="button">피아노 싱크</button>
+      <button class="mode-btn" data-mode="score" role="tab" aria-selected="false" type="button">악보 플레이</button>
+    </div>
     <div class="appbar-right">
       <a class="btn btn-ghost solo-link" href="/solo" title="솔로 시네마 · 한 연주를 더 드라마틱하게">
         <svg class="ic"><use href="#i-sparkles"/></svg><span class="solo-link-text">솔로 시네마</span>
@@ -87,6 +92,7 @@
     </div>
   </div>
 
+  <div id="compareMode" class="mode-panel">
   <div class="workbench">
 
     <!-- ── left rail ─────────────────────────────────────────── -->
@@ -305,6 +311,90 @@
       </section>
     </main>
   </div>
+  </div>
+
+  <!-- ── score play mode ────────────────────────────────────── -->
+  <section id="scoreMode" class="mode-panel score-mode" hidden>
+    <div class="score-head">
+      <div>
+        <h1>악보 플레이</h1>
+        <p>연주 영상과 악보를 올리면, 음표 단위 커서가 실제 타건에 맞춰 움직입니다. 웹 미리보기와 출력 MP4에 모두 표시됩니다.</p>
+      </div>
+      <span class="tag" id="scoreBadge">준비</span>
+    </div>
+
+    <div class="score-grid">
+      <div class="score-left">
+        <div class="card">
+          <div class="card-title"><svg class="ic"><use href="#i-film"/></svg><span>입력</span></div>
+          <label class="field">
+            <span class="field-label">연주 영상</span>
+            <input type="file" id="scoreVideoFile" accept="video/*" />
+          </label>
+          <label class="field">
+            <span class="field-label">악보 파일</span>
+            <input type="file" id="scoreFile" accept=".musicxml,.mxl,.xml,.mid,.midi" />
+          </label>
+          <label class="field">
+            <span class="field-label">정밀도</span>
+            <select id="scoreQuality">
+              <option value="fast">빠름</option>
+              <option value="balanced" selected>보통</option>
+              <option value="accurate">정밀</option>
+            </select>
+          </label>
+          <div class="score-actions">
+            <button id="scoreAnalyzeBtn" class="btn btn-primary" type="button">악보 정렬</button>
+            <button id="scoreResetBtn" class="btn btn-ghost" type="button">초기화</button>
+          </div>
+          <div class="score-progress"><i id="scoreBar"></i></div>
+          <p class="field-note" id="scoreMsg">MusicXML(.musicxml/.mxl) 또는 MIDI(.mid/.midi)를 지원합니다. PDF·이미지 악보는 아직 지원하지 않습니다.</p>
+        </div>
+
+        <div class="card" id="scoreInfoCard" hidden>
+          <div class="card-title"><svg class="ic"><use href="#i-gauge"/></svg><span>정렬 결과</span></div>
+          <div class="statgrid" id="scoreStats"></div>
+          <p class="field-note" id="scoreWarnings"></p>
+        </div>
+
+        <div class="card" id="scoreRenderCard" hidden>
+          <div class="card-title"><svg class="ic"><use href="#i-sliders"/></svg><span>출력 설정</span></div>
+          <label class="field">
+            <span class="field-label">악보 위치</span>
+            <select id="scorePosition">
+              <option value="bottom" selected>화면 하단</option>
+              <option value="top">화면 상단</option>
+              <option value="left">왼쪽</option>
+              <option value="right">오른쪽</option>
+            </select>
+          </label>
+          <label class="switch switch-row"><input type="checkbox" id="scoreOverlay" checked /><span class="track"></span><span class="switch-text">악보 패널 표시</span></label>
+          <label class="field">
+            <span class="field-label">파일명</span>
+            <input type="text" id="scoreFilename" value="score-play.mp4" />
+          </label>
+          <button id="scoreRenderBtn" class="btn btn-primary btn-wide" type="button">악보 영상 생성</button>
+        </div>
+
+        <div class="card" id="scoreResultCard" hidden>
+          <div class="card-title"><svg class="ic"><use href="#i-download"/></svg><span>결과</span></div>
+          <video id="scoreResultVideo" controls playsinline></video>
+          <a id="scoreDownload" class="btn btn-primary btn-wide" href="/api/score/download">
+            <svg class="ic"><use href="#i-download"/></svg><span>다운로드</span>
+          </a>
+        </div>
+      </div>
+
+      <div class="score-right">
+        <div class="card card-flush">
+          <div class="card-title"><svg class="ic"><use href="#i-music"/></svg><span>악보 진행</span><span class="readout mono" id="scoreTime">0.00s</span></div>
+          <video id="scorePreviewVideo" controls playsinline></video>
+          <div class="score-sheet" id="scoreSheet"><p class="score-empty">영상과 악보를 올리고 정렬을 시작하세요.</p></div>
+          <div class="score-legend"><i></i><span>노란 표시가 지금 연주 중인 음표입니다.</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <!-- ── status bar ──────────────────────────────────────────── -->
   <footer class="statusbar">
@@ -356,6 +446,7 @@
   </form>
 </dialog>
 
+<script src="/static/score.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

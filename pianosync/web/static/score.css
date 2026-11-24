@@ -1,0 +1,42 @@
+/* Score-play mode — shares the studio design system. */
+
+.mode-panel { flex: 1; min-height: 0; }
+.score-mode { overflow: auto; padding: 18px calc(16px + var(--safe-right)) 24px calc(16px + var(--safe-left)); }
+.score-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  margin-bottom: 14px;
+}
+.score-head h1 { font-size: 18px; letter-spacing: -.3px; }
+.score-head p { margin-top: 4px; font-size: var(--fs-caption); color: var(--fg-3); max-width: 720px; }
+.score-grid {
+  display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 14px; align-items: start;
+}
+.score-left { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.score-actions { display: flex; gap: 8px; margin-top: 4px; }
+.score-actions .btn { flex: 1; }
+#scorePreviewVideo, #scoreResultVideo {
+  display: block; width: 100%; max-height: 42vh; border-radius: var(--r-sm);
+  background: #000; object-fit: contain;
+}
+#scoreResultVideo { max-height: 26vh; margin-bottom: 8px; }
+.score-sheet {
+  margin-top: 10px; min-height: 180px; overflow: auto;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--sunken); color: var(--fg);
+}
+.score-sheet svg { display: block; width: 100%; height: auto; }
+.score-sheet .score-note.is-current { fill: #f5c451; stroke: #f5c451; }
+.score-empty { padding: 60px 16px; text-align: center; color: var(--fg-3); font-size: var(--fs-caption); }
+.score-legend {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  font-size: var(--fs-caption); color: var(--fg-3);
+}
+.score-legend i { width: 12px; height: 12px; border-radius: 3px; background: #f5c451; flex: none; }
+.score-progress { height: 4px; border-radius: 999px; background: var(--border); overflow: hidden; margin-top: 10px; }
+.score-progress > i { display: block; height: 100%; width: 0; background: var(--fg-2); transition: width .2s; }
+#scoreWarnings { margin-top: 8px; color: var(--warn-line, var(--fg-3)); }
+@media (max-width: 900px) {
+  .score-grid { grid-template-columns: 1fr; }
+  .score-right { order: -1; }
+}

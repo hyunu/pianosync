@@ -25,6 +25,7 @@ from ..errors import PianoSyncError
 from ..video.frames import extract_frame_png
 from ..video.overlay import default_preview_family, font_choices, servable_font_path
 from .jobs import JobManager
+from .score_workspace import ScoreWorkspace
 from .solo_workspace import MAX_MOMENTS, SoloWorkspace, solo_style_choices
 from .workspace import Workspace
 
@@ -167,6 +168,7 @@ def create_app(
     workspace: Optional[Workspace] = None,
     root: Optional[str] = None,
     solo: Optional[SoloWorkspace] = None,
+    score: Optional[ScoreWorkspace] = None,
 ) -> FastAPI:
     root = root or os.environ.get("PIANOSYNC_WEB_ROOT", DEFAULT_ROOT)
     uploads_dir = os.path.join(root, "uploads")
@@ -183,6 +185,10 @@ def create_app(
         cache_dir=os.path.join(root, "cache"),
         output_dir=os.path.join(root, "outputs"),
     )
+    score_ws = score or ScoreWorkspace(
+        cache_dir=os.path.join(root, "cache"),
+        output_dir=os.path.join(root, "outputs"),
+    )
     jobs = JobManager()
 
     app = FastAPI(title="Piano Sync Switcher", version="0.2.0")
@@ -194,6 +200,7 @@ def create_app(
     )
     app.state.workspace = ws
     app.state.solo = solo_ws
+    app.state.score = score_ws
     app.state.jobs = jobs
     app.state.uploads_dir = uploads_dir
 
@@ -251,6 +258,15 @@ def create_app(
                 "intro_seconds": 2.5,
                 "normalize_audio": True,
                 "include_audio": True,
+            },
+        }
+        data["score"] = {
+            "defaults": {
+                "overlay_enabled": True,
+                "position": "bottom",
+                "fps": 12.0,
+                "scale": 0.9,
+                "margin": 12,
             },
         }
         return data
@@ -574,6 +590,78 @@ def create_app(
             media_type="video/mp4",
             filename=os.path.basename(path),
         )
+
+    # -- score play -----------------------------------------------------
+    @app.post("/api/score/analyze")
+    async def score_analyze(payload: dict) -> dict:
+        video_path = _require_file(payload.get("video_path"))
+        score_path = _require_file(payload.get("score_path"))
+        quality = payload.get("quality", "balanced")
+        job = jobs.create("score-analyze")
+
+        def work(progress) -> dict:
+            return score_ws.analyze(
+                video_path, score_path, quality=quality, progress=progress
+            )
+
+        jobs.run(job, work)
+        return {"job_id": job.id}
+
+    @app.get("/api/score/status")
+    async def score_status() -> dict:
+        return score_ws.status_payload()
+
+    @app.get("/api/score/svg")
+    async def score_svg() -> Response:
+        return Response(content=score_ws.svg(), media_type="image/svg+xml")
+
+    @app.post("/api/score/render")
+    async def score_render(payload: dict) -> dict:
+        if not score_ws.ready:
+            raise HTTPException(status_code=400, detail="악보 정렬을 먼저 실행하세요.")
+        job = jobs.create("score-render")
+
+        def work(progress) -> dict:
+            result = score_ws.render(payload, progress=progress)
+            return {
+                "name": os.path.basename(result.path),
+                "duration": round(result.duration, 2),
+                "width": result.width,
+                "height": result.height,
+                "fps": round(result.fps, 2),
+            }
+
+        jobs.run(job, work)
+        return {"job_id": job.id}
+
+    @app.post("/api/score/reset")
+    async def score_reset() -> dict:
+        score_ws.reset()
+        return {"ok": True}
+
+    @app.get("/api/score/media")
+    async def score_media() -> FileResponse:
+        if not score_ws.ready or score_ws.performance is None:
+            raise HTTPException(status_code=404, detail="영상이 없습니다.")
+        path = score_ws.performance.path
+        if not os.path.isfile(path):
+            raise HTTPException(status_code=404, detail="영상이 없습니다.")
+        return FileResponse(path, media_type="video/mp4")
+
+    def _score_result() -> str:
+        result = score_ws.last_render
+        if result is None or not os.path.isfile(result.path):
+            raise HTTPException(status_code=404, detail="생성된 영상이 없습니다.")
+        return result.path
+
+    @app.get("/api/score/result")
+    async def score_result() -> FileResponse:
+        return FileResponse(_score_result(), media_type="video/mp4")
+
+    @app.get("/api/score/download")
+    async def score_download() -> FileResponse:
+        path = _score_result()
+        return FileResponse(path, media_type="video/mp4", filename=os.path.basename(path))
 
     # -- error helper ---------------------------------------------------
     @app.exception_handler(PianoSyncError)

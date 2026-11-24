@@ -186,6 +186,19 @@ button { font-family: inherit; }
 .brand-name { font-weight: 600; font-size: var(--fs-body); letter-spacing: -.2px; white-space: nowrap; }
 .brand-tag { font-size: var(--fs-caption); color: var(--fg-3); white-space: nowrap; }
 .appbar-right { display: flex; align-items: center; gap: 2px; flex: none; }
+.mode-switch {
+  display: flex; align-items: center; gap: 2px; padding: 3px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--sunken); flex: none;
+}
+.mode-btn {
+  height: 26px; padding: 0 12px; border: none; border-radius: 999px;
+  background: transparent; color: var(--fg-3); cursor: pointer;
+  font-size: var(--fs-caption); font-weight: 600; white-space: nowrap;
+  transition: background .14s, color .14s;
+}
+.mode-btn:hover { color: var(--fg); }
+.mode-btn.is-active { background: var(--surface-2); color: var(--fg); box-shadow: var(--shadow-pop); }
 
 .install-banner {
   flex: none;
@@ -615,6 +628,7 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: none;
 @media (max-width: 760px) {
   .workbench { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .brand-tag { display: none; }
+  .mode-btn { padding: 0 9px; }
   .solo-link-text { display: none; }
   .rail { flex-direction: row; align-items: center; border-right: none; border-bottom: 1px solid var(--border); padding: 8px 10px; gap: 8px; overflow-x: auto; }
   .steps { flex-direction: row; }

@@ -7,10 +7,13 @@ continuous performance and adds cinematic emphasis instead:
 * a short punch-in (and small focal shift) that starts exactly on each impact,
 * a brightness flash on those moments,
 * a soft bloom, colour grade, vignette and film grain,
-* optional letterbox bars and a generated intro title card.
+* optional letterbox bars and a generated intro title card,
+* an optional score panel that follows the played notes (score playback mode).
 
 Everything is expressed as an FFmpeg filter graph with time-varying
 expressions, so there is no per-frame Python work and audio stays in sync.
+The score panel is the only exception: its transparent frames are generated
+upfront by :mod:`pianosync.video.score_overlay`.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from ..errors import PianoSyncError
 from .mapping import resolve_output_size
 from .overlay import find_font_path, missing_hangul, resolve_font
 from .render import run_ffmpeg_with_progress
+from .score_overlay import ScoreOverlaySpec, build_score_filter
 
 
 @dataclass(frozen=True)
@@ -556,6 +560,7 @@ def render_solo(
     config: SoloConfig,
     moments: Optional[Sequence[ImpactMoment]] = None,
     progress: Optional[Progress] = None,
+    score_overlay: Optional[ScoreOverlaySpec] = None,
 ) -> SoloRenderResult:
     """Render one performance with the dramatic treatment described above."""
     progress = progress or Progress()
@@ -626,7 +631,20 @@ def render_solo(
             ]
         if config.include_audio:
             cmd += ["-i", wav_path]
-        cmd += ["-filter_complex", filter_complex, "-map", "[vout]"]
+        video_map = "[vout]"
+        if score_overlay is not None:
+            score_index = 1 + (1 if title_path else 0) + (1 if config.include_audio else 0)
+            cmd += [
+                "-framerate",
+                f"{score_overlay.fps:g}",
+                "-i",
+                score_overlay.pattern,
+            ]
+            filter_complex += ";" + build_score_filter(
+                score_overlay, score_index, intro_seconds
+            )
+            video_map = "[vscored]"
+        cmd += ["-filter_complex", filter_complex, "-map", video_map]
         if config.include_audio:
             cmd += ["-map", "[aout]"]
         cmd += [
